@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import { parseWebhookEvent, verifyAppKeyWithNeynar } from "@farcaster/miniapp-node";
+import { createClient as createQuickAuthClient } from "@farcaster/quick-auth";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -108,6 +109,10 @@ const RATE_LIMIT_TRADE_MAX = Number(process.env.RATE_LIMIT_TRADE_MAX || 30);
 const BODY_MAX_BYTES = Number(process.env.BODY_MAX_BYTES || 256 * 1024);
 const FC_WEBHOOK_REQUIRE_VERIFY = process.env.NODE_ENV === "test" ? false : String(process.env.FC_WEBHOOK_REQUIRE_VERIFY || "true") === "true";
 const ALLOW_LOCAL_SIGNER_IN_PROD = String(process.env.ALLOW_LOCAL_SIGNER_IN_PROD || "false") === "true";
+const FC_AUTH_REQUIRED = process.env.NODE_ENV === "test" ? false : String(process.env.FC_AUTH_REQUIRED || "true") === "true";
+const FC_QUICK_AUTH_ORIGIN = process.env.FC_QUICK_AUTH_ORIGIN || "https://auth.farcaster.xyz";
+const FC_AUTH_ALLOWED_DOMAINS = process.env.FC_AUTH_ALLOWED_DOMAINS || "";
+const quickAuthClient = createQuickAuthClient({ origin: FC_QUICK_AUTH_ORIGIN });
 
 function normalizePlainText(value, maxLen) {
   const safe = String(value || "")
@@ -892,6 +897,93 @@ async function parseVerifiedWebhookEvent(raw) {
   }
 }
 
+function toDomain(input) {
+  try {
+    return new URL(String(input || "")).hostname;
+  } catch {
+    return String(input || "").trim().toLowerCase();
+  }
+}
+
+function buildAuthDomainCandidates() {
+  const out = new Set();
+  const fromUrls = [APP_BASE_URL, process.env.FC_HOME_URL].map(toDomain).filter(Boolean);
+  for (const d of fromUrls) out.add(d);
+  for (const d of String(FC_AUTH_ALLOWED_DOMAINS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean)) out.add(d);
+  if (out.size === 0) out.add("baserush.app");
+  return Array.from(out);
+}
+
+const AUTH_DOMAIN_CANDIDATES = buildAuthDomainCandidates();
+
+function getBearerToken(req) {
+  const raw = String(req.headers?.authorization || req.headers?.Authorization || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1].trim() : "";
+}
+
+async function verifyQuickAuthToken(token) {
+  let lastError = null;
+  for (const domain of AUTH_DOMAIN_CANDIDATES) {
+    try {
+      const payload = await quickAuthClient.verifyJwt({ token, domain });
+      return { payload, domain };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  const err = new Error("invalid_quick_auth_token");
+  err.status = 401;
+  err.cause = lastError;
+  throw err;
+}
+
+async function requireQuickAuth(req) {
+  if (!FC_AUTH_REQUIRED) return { required: false, verified: false, payload: null, domain: null };
+  const token = getBearerToken(req);
+  if (!token) {
+    const err = new Error("missing_auth_bearer");
+    err.status = 401;
+    throw err;
+  }
+
+  const verified = await verifyQuickAuthToken(token);
+  return { required: true, verified: true, token, payload: verified.payload, domain: verified.domain };
+}
+
+function bindUserToQuickAuth(user, authResult) {
+  if (!authResult?.verified || !authResult?.payload) return;
+  const payload = authResult.payload;
+  user.auth = {
+    ...(user.auth || {}),
+    provider: "farcaster",
+    fid: Number(payload.sub || user.auth?.fid || 0) || null,
+    address: payload.address || user.auth?.address || null,
+    quickAuthVerified: true,
+    quickAuthAud: payload.aud || null,
+    quickAuthIss: payload.iss || null,
+    quickAuthExp: payload.exp || null,
+    verifiedAt: new Date().toISOString()
+  };
+}
+
+function enforceUserQuickAuthBinding(userId, authResult) {
+  if (!FC_AUTH_REQUIRED) return getOrCreateUser(userId);
+  const user = getOrCreateUser(userId);
+  bindUserToQuickAuth(user, authResult);
+
+  const payloadFid = Number(authResult?.payload?.sub || 0) || null;
+  const userFid = Number(user?.auth?.fid || 0) || null;
+  if (userFid && payloadFid && userFid !== payloadFid) {
+    const err = new Error("auth_user_mismatch");
+    err.status = 403;
+    throw err;
+  }
+
+  return user;
+}
 async function serveStatic(file, res) {
   try {
     const buf = await readFile(path.join(root, file));
@@ -946,21 +1038,43 @@ const server = createServer(async (req, res) => {
     const provider = (body.provider || fromPath || "farcaster").toLowerCase();
     if (!["farcaster", "base"].includes(provider)) return json(res, 400, { ok: false, error: "invalid_provider" });
 
+    let authResult = { required: false, verified: false, payload: null, domain: null };
+    if (provider === "farcaster") {
+      try {
+        authResult = await requireQuickAuth(req);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
+    }
+
     const userId = body.userId || `${provider}_u_${Date.now()}`;
     const user = getOrCreateUser(userId);
     user.auth = {
       provider,
-      fid: body.fid || null,
-      address: body.address || null,
-      username: body.username || null
+      fid: Number(body.fid || authResult?.payload?.sub || 0) || null,
+      address: body.address || authResult?.payload?.address || null,
+      username: body.username || null,
+      quickAuthVerified: !!authResult.verified,
+      quickAuthAud: authResult?.payload?.aud || null,
+      quickAuthIss: authResult?.payload?.iss || null,
+      quickAuthExp: authResult?.payload?.exp || null,
+      verifiedAt: authResult.verified ? new Date().toISOString() : null
     };
 
     addNotification(userId, `${provider} login success`, { channel: provider, type: "auth" });
-    return json(res, 200, { ok: true, user, session: { provider, userId } });
+    return json(res, 200, { ok: true, user, session: { provider, userId, authVerified: !!authResult.verified } });
   }
 
   if (req.method === "POST" && url.pathname === "/api/balance/deposit-usdc") {
     const { userId, amount } = await parseBody(req);
+    if (FC_AUTH_REQUIRED) {
+      try {
+        const auth = await requireQuickAuth(req);
+        enforceUserQuickAuthBinding(userId, auth);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
+    }
     const user = getOrCreateUser(userId);
     user.wallet.usdc = rounded(user.wallet.usdc + Number(amount || 0), 2);
     addNotification(userId, `USDC deposit: ${amount}`, { channel: "base", type: "wallet" });
@@ -971,6 +1085,14 @@ const server = createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/premium/activate") {
     const { userId, idempotencyKey } = await parseBody(req);
     if (!userId || !idempotencyKey) return json(res, 400, { ok: false, error: "userId and idempotencyKey required" });
+    if (FC_AUTH_REQUIRED) {
+      try {
+        const auth = await requireQuickAuth(req);
+        enforceUserQuickAuthBinding(userId, auth);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
+    }
 
     const idemKey = `premium:${idempotencyKey}`;
     const existing = db.idempotency.get(idemKey);
@@ -1083,6 +1205,14 @@ const server = createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/copytrade/settings") {
     const { userId, enabled, ratio, maxUsdcPerTrade, slippageBps } = await parseBody(req);
     if (!userId) return json(res, 400, { ok: false, error: "userId required" });
+    if (FC_AUTH_REQUIRED) {
+      try {
+        const auth = await requireQuickAuth(req);
+        enforceUserQuickAuthBinding(userId, auth);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
+    }
 
     const settings = getOrCreateCopySettings(userId);
     if (typeof enabled === "boolean") settings.enabled = enabled;
@@ -1113,6 +1243,14 @@ const server = createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/trade/execute") {
     const { userId, token, side = "BUY", amountUsdc, tokenAmount, sellPercent, idempotencyKey } = await parseBody(req);
     if (!userId || !token || !idempotencyKey) return json(res, 400, { ok: false, error: "userId, token, idempotencyKey required" });
+    if (FC_AUTH_REQUIRED) {
+      try {
+        const auth = await requireQuickAuth(req);
+        enforceUserQuickAuthBinding(userId, auth);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
+    }
 
     const idemKey = `trade:${idempotencyKey}`;
     const existing = db.idempotency.get(idemKey);
@@ -1154,6 +1292,14 @@ const server = createServer(async (req, res) => {
     if (!isLocalSignerAllowed()) return json(res, 503, { ok: false, error: "local_signer_blocked_in_production" });
     const { userId, token, side = "BUY", amountUsdc, tokenAmount, sellPercent, idempotencyKey, onchain = {} } = await parseBody(req);
     if (!userId || !token || !idempotencyKey) return json(res, 400, { ok: false, error: "userId, token, idempotencyKey required" });
+    if (FC_AUTH_REQUIRED) {
+      try {
+        const auth = await requireQuickAuth(req);
+        enforceUserQuickAuthBinding(userId, auth);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
+    }
 
     const idemKey = `onchain_trade:${idempotencyKey}`;
     const existing = db.idempotency.get(idemKey);
@@ -1229,6 +1375,14 @@ const server = createServer(async (req, res) => {
 
     if (!followerUserId || !leaderUserId || !token || !idempotencyKey) {
       return json(res, 400, { ok: false, error: "followerUserId, leaderUserId, token, idempotencyKey required" });
+    }
+    if (FC_AUTH_REQUIRED) {
+      try {
+        const auth = await requireQuickAuth(req);
+        enforceUserQuickAuthBinding(followerUserId, auth);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
     }
 
     const idemKey = `onchain_copy:${idempotencyKey}`;
@@ -1317,6 +1471,14 @@ const server = createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/onchain/smoke") {
     if (!isLocalSignerAllowed()) return json(res, 503, { ok: false, error: "local_signer_blocked_in_production" });
     const { userId = "guest", token = "ETH", side = "BUY", amountUsdc = 1, tokenAmount = 0, idempotencyKey = "smoke_" + Date.now(), onchain = {} } = await parseBody(req);
+    if (FC_AUTH_REQUIRED) {
+      try {
+        const auth = await requireQuickAuth(req);
+        enforceUserQuickAuthBinding(userId, auth);
+      } catch (err) {
+        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+      }
+    }
     try {
       const user = getOrCreateUser(userId);
       const exec = await sendTradeExecutorTx({
@@ -1431,8 +1593,6 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 export { server, db, getOrCreateUser };
-
-
 
 
 

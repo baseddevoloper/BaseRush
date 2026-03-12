@@ -25,7 +25,8 @@ const LS_KEYS = {
   activeToken: "arena_active_token",
   buyAmount: "arena_buy_amount",
   customSell: "arena_custom_sell",
-  copySettings: "arena_copy_settings"
+  copySettings: "arena_copy_settings",
+  quickAuthToken: "arena_quick_auth_token"
 };
 
 function readLocal(key, fallback) {
@@ -197,10 +198,19 @@ const FRIENDS = [
   { id: "u5", handle: "@bullbusterz", pnl: 0 }
 ];
 
-async function apiPost(path, body) {
+function buildAuthHeaders(authTokenOverride) {
+  const token = authTokenOverride || readLocal(LS_KEYS.quickAuthToken, "");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function apiPost(path, body, options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...buildAuthHeaders(options.authToken)
+  };
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body)
   });
   const data = await res.json();
@@ -208,8 +218,9 @@ async function apiPost(path, body) {
   return data;
 }
 
-async function apiGet(path) {
-  const res = await fetch(path);
+async function apiGet(path, options = {}) {
+  const headers = buildAuthHeaders(options.authToken);
+  const res = await fetch(path, { headers });
   const data = await res.json();
   if (!res.ok || data.ok === false) throw new Error(data.error || "request_failed");
   return data;
@@ -752,14 +763,28 @@ export default function App() {
 
       if (isInMiniAppContext) {
         const identity = await resolveMiniAppIdentity({ interactive: true });
+        const qa = await withTimeout(() => sdk.quickAuth.getToken(), 5000, "quickAuth.getToken");
+        const authToken = qa?.token || "";
+        if (!authToken) throw new Error("quick_auth_token_missing");
+
+        try {
+          if (typeof window !== "undefined") window.localStorage.setItem(LS_KEYS.quickAuthToken, authToken);
+        } catch {
+          // ignore storage failures in embedded browser
+        }
+
         const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
-        login = await apiPost("/api/auth/login", {
-          provider: "farcaster",
-          userId: resolvedUserId,
-          fid: identity.fid,
-          username: identity.username || "you",
-          address: identity.address
-        });
+        login = await apiPost(
+          "/api/auth/login",
+          {
+            provider: "farcaster",
+            userId: resolvedUserId,
+            fid: identity.fid,
+            username: identity.username || "you",
+            address: identity.address
+          },
+          { authToken }
+        );
         setConnectHint(identity.address ? `Connected: ${identity.address}` : "Connected via Farcaster context");
       } else {
         const resolvedUserId = userId.trim() || `arena_${Date.now()}`;
@@ -786,15 +811,25 @@ export default function App() {
       setLoading(true);
       try {
         const identity = await resolveMiniAppIdentity();
+        const cachedToken = sdk.quickAuth?.token || readLocal(LS_KEYS.quickAuthToken, "");
+        if (!cachedToken) {
+          if (!cancelled) setConnectHint("Tap Connect Mini App to verify your Farcaster session");
+          return;
+        }
+
         const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
 
-        const login = await apiPost("/api/auth/login", {
-          provider: "farcaster",
-          userId: resolvedUserId,
-          fid: identity.fid,
-          username: identity.username || "you",
-          address: identity.address
-        });
+        const login = await apiPost(
+          "/api/auth/login",
+          {
+            provider: "farcaster",
+            userId: resolvedUserId,
+            fid: identity.fid,
+            username: identity.username || "you",
+            address: identity.address
+          },
+          { authToken: cachedToken }
+        );
 
         if (cancelled) return;
         setUserId(login.session.userId);
@@ -1671,7 +1706,6 @@ export default function App() {
     </div>
   );
 }
-
 
 
 

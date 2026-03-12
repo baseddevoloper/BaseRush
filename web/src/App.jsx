@@ -215,6 +215,20 @@ async function apiGet(path) {
   return data;
 }
 
+async function withTimeout(task, ms, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(task),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timeout`)), ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function money(n) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n || 0);
 }
@@ -661,11 +675,11 @@ export default function App() {
     setInbox(inboxOut.items || []);
   }
 
-  async function resolveMiniAppIdentity() {
+  async function resolveMiniAppIdentity({ interactive = false } = {}) {
     const identity = { fid: null, username: null, address: null };
 
     try {
-      const ctx = await sdk.context;
+      const ctx = await withTimeout(() => sdk.context, 1600, "sdk.context");
       identity.fid = Number(ctx?.user?.fid || 0) || null;
       identity.username = ctx?.user?.username || null;
       identity.address =
@@ -673,17 +687,20 @@ export default function App() {
         ctx?.user?.custodyAddress ||
         null;
     } catch {
-      // ignore context read errors
+      // continue with best-effort identity
     }
 
     try {
-      const provider = await sdk.wallet.getEthereumProvider();
+      const provider = await withTimeout(() => sdk.wallet.getEthereumProvider(), 1800, "wallet provider");
       if (provider?.request) {
-        const accounts = await provider.request({ method: "eth_accounts" });
+        let accounts = await withTimeout(() => provider.request({ method: "eth_accounts" }), 1800, "eth_accounts");
+        if ((!Array.isArray(accounts) || !accounts[0]) && interactive) {
+          accounts = await withTimeout(() => provider.request({ method: "eth_requestAccounts" }), 4000, "eth_requestAccounts");
+        }
         if (Array.isArray(accounts) && accounts[0]) identity.address = String(accounts[0]);
       }
     } catch {
-      // wallet may be unavailable in some clients
+      // wallet provider may be unavailable on some clients
     }
 
     return identity;
@@ -691,11 +708,12 @@ export default function App() {
 
   async function handleConnect() {
     setLoading(true);
+    setConnectHint("Connecting mini app wallet...");
     try {
       let login;
 
       if (isInMiniAppContext) {
-        const identity = await resolveMiniAppIdentity();
+        const identity = await resolveMiniAppIdentity({ interactive: true });
         const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
         login = await apiPost("/api/auth/login", {
           provider: "farcaster",
@@ -704,11 +722,11 @@ export default function App() {
           username: identity.username || "you",
           address: identity.address
         });
-        setConnectHint(identity.address ? `Wallet: ${identity.address}` : "Connected via Farcaster");
+        setConnectHint(identity.address ? `Connected: ${identity.address}` : "Connected via Farcaster context");
       } else {
         const resolvedUserId = userId.trim() || `arena_${Date.now()}`;
         login = await apiPost("/api/auth/login", { provider: "base", userId: resolvedUserId, username: "you" });
-        setConnectHint("Connected in web mode");
+        setConnectHint("Connected in browser mode (not Mini App)");
       }
 
       setUserId(login.session.userId);
@@ -717,7 +735,6 @@ export default function App() {
       await refreshSummary(login.session.userId);
     } catch (err) {
       setConnectHint(`Connect failed: ${err.message}`);
-      alert(`Connect failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -1538,7 +1555,6 @@ export default function App() {
     </div>
   );
 }
-
 
 
 

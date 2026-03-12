@@ -487,6 +487,12 @@ export default function App() {
     slippageBps: 100
   }));
 
+  const profileHandle = useMemo(() => {
+    const username = String(miniContext?.user?.username || "").trim();
+    if (username) return `@${username}`;
+    return userId ? `@${userId}` : "@you";
+  }, [miniContext?.user?.username, userId]);
+
   const currentPosition = positions[activeToken] || null;
   const holdings = useMemo(() => Object.entries(positions).filter(([, p]) => p.amount > 0), [positions]);
   const filteredTokens = useMemo(() => {
@@ -1171,7 +1177,9 @@ export default function App() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          <Input placeholder="User ID (optional)" value={userId} onChange={(e) => setUserId(e.target.value)} />
+          <div className="rounded-lg border border-white/10 bg-muted/30 px-3 py-2 text-sm">
+            Active profile: <span className="font-medium">{profileHandle}</span>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <Button onClick={handleConnect} disabled={loading}>{loading ? "Connecting..." : connected ? "Connected" : "Connect Mini App"}</Button>
             <Button variant="outline" onClick={() => refreshSummary()} disabled={!connected || loading}>
@@ -1473,7 +1481,7 @@ export default function App() {
               </div>
             </div>
             <div className="rounded-xl border border-white/10 bg-muted/30 p-3 text-xs text-muted-foreground">
-              your referral link: baserush.app/invite/{userId || "you"}
+              your referral link: baserush.app/invite/{(miniContext?.user?.username || userId || "you")}
             </div>
           </CardContent>
         </Card>
@@ -1482,7 +1490,7 @@ export default function App() {
       {activeTab === "profile" && (
         <div className="space-y-3">
           <ProfileHero
-            handle={userId ? `@${userId}` : "@you"}
+            handle={profileHandle}
             wallet={wallet}
             premium={premium}
             followers={socialStats.followers}
@@ -1720,7 +1728,6 @@ export default function App() {
     </div>
   );
 }
-
 
 
 

@@ -19,6 +19,7 @@ import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
 import { Badge } from "./components/ui/badge";
 import { Separator } from "./components/ui/separator";
+import { sdk } from "@farcaster/miniapp-sdk";
 
 const LS_KEYS = {
   activeToken: "arena_active_token",
@@ -443,6 +444,13 @@ export default function App() {
   const [feed, setFeed] = useState(INITIAL_FEED);
   const [onchainConfig, setOnchainConfig] = useState(null);
   const [smokeStatus, setSmokeStatus] = useState(null);
+  const [isInMiniAppContext, setIsInMiniAppContext] = useState(false);
+  const [notificationState, setNotificationState] = useState({
+    status: "idle",
+    message: "",
+    token: "",
+    url: ""
+  });
   const [copySettings, setCopySettings] = useState(() => readLocalJSON(LS_KEYS.copySettings, {
     enabled: true,
     ratio: 0.2,
@@ -517,6 +525,70 @@ export default function App() {
     loadInsights();
   }, [selectedTokenProfile?.symbol]);
 
+  useEffect(() => {
+    let mounted = true;
+    sdk
+      .isInMiniApp()
+      .then((ok) => {
+        if (mounted) setIsInMiniAppContext(!!ok);
+      })
+      .catch(() => {
+        if (mounted) setIsInMiniAppContext(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    function onEnabled({ notificationDetails }) {
+      setNotificationState({
+        status: "enabled",
+        message: "Notifications enabled.",
+        token: notificationDetails?.token || "",
+        url: notificationDetails?.url || ""
+      });
+    }
+
+    function onDisabled() {
+      setNotificationState({
+        status: "disabled",
+        message: "Notifications disabled.",
+        token: "",
+        url: ""
+      });
+    }
+
+    function onAdded({ notificationDetails }) {
+      setNotificationState({
+        status: "added",
+        message: "Mini app added successfully.",
+        token: notificationDetails?.token || "",
+        url: notificationDetails?.url || ""
+      });
+    }
+
+    function onRejected({ reason }) {
+      setNotificationState({
+        status: "rejected",
+        message: `Add mini app rejected: ${reason || "unknown_reason"}`,
+        token: "",
+        url: ""
+      });
+    }
+
+    sdk.on("notificationsEnabled", onEnabled);
+    sdk.on("notificationsDisabled", onDisabled);
+    sdk.on("miniAppAdded", onAdded);
+    sdk.on("miniAppAddRejected", onRejected);
+
+    return () => {
+      sdk.off("notificationsEnabled", onEnabled);
+      sdk.off("notificationsDisabled", onDisabled);
+      sdk.off("miniAppAdded", onAdded);
+      sdk.off("miniAppAddRejected", onRejected);
+    };
+  }, []);
   useEffect(() => {
     async function loadOnchainConfig() {
       try {
@@ -796,6 +868,45 @@ export default function App() {
       alert("Copy settings saved.");
     } catch (err) {
       alert(`Save failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function handleEnableNotifications() {
+    setLoading(true);
+    try {
+      const inMini = await sdk.isInMiniApp();
+      if (!inMini) {
+        setNotificationState({
+          status: "error",
+          message: "Open this app inside Farcaster to enable notifications.",
+          token: "",
+          url: ""
+        });
+        return;
+      }
+
+      const out = await sdk.actions.addMiniApp();
+      setNotificationState({
+        status: "requested",
+        message: "Notification permission requested.",
+        token: out?.notificationDetails?.token || "",
+        url: out?.notificationDetails?.url || ""
+      });
+    } catch (err) {
+      const raw = String(err?.name || err?.message || "unknown_error");
+      const normalized = raw.includes("RejectedByUser")
+        ? "User rejected mini app add request."
+        : raw.includes("InvalidDomainManifest")
+          ? "Manifest is invalid for addMiniApp."
+          : `Enable failed: ${raw}`;
+
+      setNotificationState({
+        status: "error",
+        message: normalized,
+        token: "",
+        url: ""
+      });
     } finally {
       setLoading(false);
     }
@@ -1143,6 +1254,40 @@ export default function App() {
             following={socialStats.following}
             copiers={socialStats.copiers}
           />
+          <Card className="rounded-2xl border-white/10">
+            <CardHeader>
+              <CardTitle className="text-base">Mini App Notifications</CardTitle>
+              <CardDescription>Enable notification permission to receive push alerts in Farcaster.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border border-white/10 bg-muted/30 p-2">
+                  <p className="text-muted-foreground">Context</p>
+                  <p>{isInMiniAppContext ? "In mini app" : "Browser / outside"}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-muted/30 p-2">
+                  <p className="text-muted-foreground">Status</p>
+                  <p className="capitalize">{notificationState.status}</p>
+                </div>
+              </div>
+
+              <Button className="w-full" onClick={handleEnableNotifications} disabled={loading}>
+                Enable Notifications
+              </Button>
+
+              {notificationState.message && (
+                <div className="rounded-lg border border-white/10 bg-muted/20 p-2 text-xs">
+                  <p>{notificationState.message}</p>
+                  {notificationState.token && (
+                    <p className="mt-1 truncate text-muted-foreground">token: {notificationState.token}</p>
+                  )}
+                  {notificationState.url && (
+                    <p className="mt-1 truncate text-muted-foreground">url: {notificationState.url}</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <Card className="rounded-2xl border-white/10">
             <CardHeader>

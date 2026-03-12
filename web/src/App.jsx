@@ -561,6 +561,7 @@ export default function App() {
   const [isInMiniAppContext, setIsInMiniAppContext] = useState(false);
   const [autoConnectTried, setAutoConnectTried] = useState(false);
   const [connectHint, setConnectHint] = useState("");
+  const [authVerified, setAuthVerified] = useState(false);
   const [miniContext, setMiniContext] = useState(null);
   const [manifestStatus, setManifestStatus] = useState(null);
   const [notificationState, setNotificationState] = useState({
@@ -574,8 +575,8 @@ export default function App() {
     ratio: 0.2,
     maxUsdcPerTrade: 25,
     slippageBps: 100
-  }));
-  const sessionPromptedRef = useRef(false);
+  }));
+
 
   const profileHandle = useMemo(() => {
     const username = String(miniContext?.user?.username || "").trim();
@@ -611,8 +612,7 @@ export default function App() {
     const following = 42;
     const copiers = premium.active ? 9 : 0;
     return { followers, following, copiers };
-  }, [feed.length, premium.active]);
-
+  }, [feed.length, premium.active]);
   useEffect(() => {
     async function loadDirectory() {
       try {
@@ -628,8 +628,7 @@ export default function App() {
       }
     }
     loadDirectory();
-  }, [globalTokenQuery, selectedTokenSymbol]);
-
+  }, [globalTokenQuery, selectedTokenSymbol]);
   useEffect(() => {
     if (!selectedTokenProfile?.symbol) return;
     async function loadInsights() {
@@ -648,8 +647,7 @@ export default function App() {
       }
     }
     loadInsights();
-  }, [selectedTokenProfile?.symbol]);
-
+  }, [selectedTokenProfile?.symbol]);
   useEffect(() => {
     let mounted = true;
     sdk
@@ -665,8 +663,7 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, []);
-
+  }, []);
   useEffect(() => {
     let cancelled = false;
     async function loadMiniContext() {
@@ -685,8 +682,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isInMiniAppContext]);
-
+  }, [isInMiniAppContext]);
   useEffect(() => {
     let cancelled = false;
     async function loadManifestStatus() {
@@ -701,8 +697,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
+  }, []);
   useEffect(() => {
     function onEnabled({ notificationDetails }) {
       setNotificationState({
@@ -751,7 +746,7 @@ export default function App() {
       sdk.off("miniAppAdded", onAdded);
       sdk.off("miniAppAddRejected", onRejected);
     };
-  }, []);
+  }, []);
   useEffect(() => {
     async function loadOnchainConfig() {
       try {
@@ -762,8 +757,7 @@ export default function App() {
       }
     }
     loadOnchainConfig();
-  }, [connected]);
-
+  }, [connected]);
   useEffect(() => {
     async function loadCopySettings() {
       if (!connected || !userId) return;
@@ -775,8 +769,7 @@ export default function App() {
       }
     }
     loadCopySettings();
-  }, [connected, userId]);
-
+  }, [connected, userId]);
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
@@ -787,8 +780,7 @@ export default function App() {
     } catch {
       // ignore localStorage failures in embedded browsers
     }
-  }, [activeToken, buyAmount, customSell, copySettings]);
-
+  }, [activeToken, buyAmount, customSell, copySettings]);
   useEffect(() => {
     if (!activeToken || Number(buyAmount || 0) <= 0) {
       setQuote(null);
@@ -921,11 +913,39 @@ export default function App() {
     });
   }
 
+  async function loginWithFarcasterAuth(identity, preferredUserId) {
+    const resolvedUserId = preferredUserId?.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
+    const token = await getQuickAuthToken({ force: true, strict: true });
+    const out = await apiPost(
+      "/api/auth/login",
+      {
+        provider: "farcaster",
+        userId: resolvedUserId,
+        fid: identity.fid,
+        username: identity.username || "you",
+        address: identity.address
+      },
+      { authToken: token }
+    );
+    if (!out?.session?.authVerified) throw new Error("farcaster_auth_required");
+    return out;
+  }
+
+  async function ensureFarcasterAuth({ force = false } = {}) {
+    if (authVerified && !force) return true;
+    const identity = await resolveMiniAppIdentity();
+    identity.address = wagmiAddress || identity.address;
+    const out = await loginWithFarcasterAuth(identity, userId);
+    setUserId(out.session.userId);
+    setAuthVerified(!!out.session.authVerified);
+    return !!out.session.authVerified;
+  }
+
   async function handleGrantSignature() {
     setLoading(true);
     setConnectHint("Requesting Farcaster auth signature (offchain)...");
     try {
-      await getQuickAuthToken({ force: true, strict: true });
+      await ensureFarcasterAuth({ force: true });
       setConnectHint("Farcaster auth granted. No onchain tx sent.");
     } catch (err) {
       setConnectHint(`Signature failed: ${err?.message || "signature_permission_required"}`);
@@ -950,6 +970,7 @@ export default function App() {
 
       setConnectHint(identity.address ? `Connected wallet: ${identity.address} (no onchain tx)` : "Connected in mini app (no onchain tx)");
       setUserId(login.session.userId);
+      setAuthVerified(!!login?.session?.authVerified);
       setConnected(true);
       setAutoConnectTried(true);
       await refreshSummary(login.session.userId);
@@ -959,8 +980,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }
-
+  }
   useEffect(() => {
     if (!isInMiniAppContext || connected || loading || autoConnectTried) return;
 
@@ -969,12 +989,13 @@ export default function App() {
       setLoading(true);
       try {
         const identity = await resolveMiniAppIdentity();
-      identity.address = await ensureWalletAddress(identity);
-      const quickToken = await getQuickAuthToken({ force: true, strict: false });
-      const login = await loginWithPreferredSession(identity, userId, quickToken);
+        identity.address = await ensureWalletAddress(identity);
+        const quickToken = await getQuickAuthToken({ force: true, strict: false });
+        const login = await loginWithPreferredSession(identity, userId, quickToken);
 
         if (cancelled) return;
         setUserId(login.session.userId);
+        setAuthVerified(!!login?.session?.authVerified);
         setConnected(true);
         setConnectHint(identity.address ? `Wallet: ${identity.address}` : "Connected in mini app");
         await refreshSummary(login.session.userId);
@@ -1009,6 +1030,16 @@ export default function App() {
     }
   }
 
+
+  async function requireProtectedAuth() {
+    try {
+      await ensureFarcasterAuth();
+    } catch {
+      setConnectHint("Farcaster auth required for this action.");
+      throw new Error("farcaster_auth_required");
+    }
+  }
+
   async function handleDeposit() {
     if (!userId) return;
     setLoading(true);
@@ -1026,6 +1057,7 @@ export default function App() {
     if (!userId) return;
     setLoading(true);
     try {
+      await requireProtectedAuth();
       await apiPost("/api/premium/activate", { userId, idempotencyKey: `premium_react_${Date.now()}` });
       await refreshSummary();
     } catch (err) {
@@ -1039,6 +1071,7 @@ export default function App() {
     if (!userId) return;
     setLoading(true);
     try {
+      await requireProtectedAuth();
       const out = await apiPost("/api/trade/execute-onchain", {
         userId,
         token: activeToken,
@@ -1068,6 +1101,7 @@ export default function App() {
     if (!userId || !qty || qty <= 0) return;
     setLoading(true);
     try {
+      await requireProtectedAuth();
       const out = await apiPost("/api/trade/execute-onchain", {
         userId,
         token: activeToken,
@@ -1099,6 +1133,7 @@ export default function App() {
     if (!currentPosition || !userId) return;
     setLoading(true);
     try {
+      await requireProtectedAuth();
       const out = await apiPost("/api/trade/execute-onchain", {
         userId,
         token: activeToken,
@@ -1136,6 +1171,7 @@ export default function App() {
     if (!userId || !premium.active) return;
     setLoading(true);
     try {
+      await requireProtectedAuth();
       const out = await apiPost("/api/copytrade/execute-onchain", {
         followerUserId: userId,
         leaderUserId: "basewhale",
@@ -1160,6 +1196,7 @@ export default function App() {
     setLoading(true);
     setSmokeStatus(null);
     try {
+      await requireProtectedAuth();
       const out = await apiPost("/api/onchain/smoke", {
         userId,
         token: activeToken,
@@ -1179,6 +1216,7 @@ export default function App() {
     if (!userId) return;
     setLoading(true);
     try {
+      await requireProtectedAuth();
       const out = await apiPost("/api/copytrade/settings", {
         userId,
         enabled: !!copySettings.enabled,
@@ -1326,6 +1364,15 @@ export default function App() {
                   ? "Auto-connecting wallet and requesting signature..."
                   : "Waiting for mini app wallet session..."}
             </div>
+
+            <div className="mt-3 rounded-xl border border-white/10 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-2">
+                <span>Farcaster auth: {authVerified ? "Verified" : "Pending"}</span>
+                <Button size="sm" variant={authVerified ? "outline" : "default"} onClick={handleGrantSignature} disabled={loading || !walletConnected}>
+                  {authVerified ? "Refresh Auth" : "Verify Auth"}
+                </Button>
+              </div>
+            </div>
           </div>
 
           {connectHint && (
@@ -1334,7 +1381,8 @@ export default function App() {
                 .replace("open_in_farcaster_or_base_app", "Open this mini app inside Farcaster/Base app")
                 .replace("wallet_provider_unavailable", "Wallet provider is not available in this client")
                 .replace("wallet_not_connected", "Wallet connection was not approved")
-                .replace("signature_permission_required", "Signature permission is required")}</p>
+                .replace("signature_permission_required", "Signature permission is required")
+                .replace("farcaster_auth_required", "Farcaster auth required. Tap Verify Auth.")}</p>
             </div>
           )}
         </CardContent>
@@ -1896,6 +1944,18 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

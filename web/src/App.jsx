@@ -773,32 +773,40 @@ export default function App() {
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
       const identity = await resolveMiniAppIdentity({ interactive: true });
-      setConnectHint("Requesting Farcaster auth...");
-      const qa = await withTimeout(() => sdk.quickAuth.getToken(), 7000, "quickAuth.getToken");
-      const authToken = qa?.token || "";
-      if (!authToken) throw new Error("quick_auth_token_missing");
+      const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
+      const loginPayload = {
+        provider: "farcaster",
+        userId: resolvedUserId,
+        fid: identity.fid,
+        username: identity.username || "you",
+        address: identity.address
+      };
 
+      let login;
       try {
-        if (typeof window !== "undefined") window.localStorage.setItem(LS_KEYS.quickAuthToken, authToken);
-      } catch {
-        // ignore storage failures in embedded browser
+        setConnectHint("Authorizing session...");
+        login = await apiPost("/api/auth/login", loginPayload);
+      } catch (err) {
+        const msg = String(err?.message || "");
+        const requiresAuth = msg.includes("missing_auth_bearer") || msg.includes("invalid_quick_auth_token") || msg.includes("auth_required");
+        if (!requiresAuth) throw err;
+
+        setConnectHint("Requesting Farcaster auth...");
+        const qa = await withTimeout(() => sdk.quickAuth.getToken(), 7000, "quickAuth.getToken");
+        const authToken = qa?.token || "";
+        if (!authToken) throw new Error("quick_auth_token_missing");
+
+        try {
+          if (typeof window !== "undefined") window.localStorage.setItem(LS_KEYS.quickAuthToken, authToken);
+        } catch {
+          // ignore storage failures
+        }
+
+        setConnectHint("Authorizing session...");
+        login = await apiPost("/api/auth/login", loginPayload, { authToken });
       }
 
-      setConnectHint("Authorizing session...");
-      const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
-      const login = await apiPost(
-        "/api/auth/login",
-        {
-          provider: "farcaster",
-          userId: resolvedUserId,
-          fid: identity.fid,
-          username: identity.username || "you",
-          address: identity.address
-        },
-        { authToken }
-      );
       setConnectHint(identity.address ? `Connected: ${identity.address}` : "Connected via Farcaster context");
-
       setUserId(login.session.userId);
       setConnected(true);
       setAutoConnectTried(true);
@@ -819,37 +827,30 @@ export default function App() {
       setLoading(true);
       try {
         const identity = await resolveMiniAppIdentity();
-        let authToken = sdk.quickAuth?.token || readLocal(LS_KEYS.quickAuthToken, "");
-        if (!authToken) {
-          try {
-            if (!cancelled) setConnectHint("Auto verifying session...");
-            const qa = await withTimeout(() => sdk.quickAuth.getToken(), 5000, "quickAuth.getToken");
-            authToken = qa?.token || "";
-            if (authToken && typeof window !== "undefined") {
-              window.localStorage.setItem(LS_KEYS.quickAuthToken, authToken);
-            }
-          } catch {
-            // requires explicit user interaction in some clients
-          }
-        }
-        if (!authToken) {
-          if (!cancelled) setConnectHint("Tap Connect Mini App to verify your Farcaster session");
-          return;
-        }
-
         const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
+        const loginPayload = {
+          provider: "farcaster",
+          userId: resolvedUserId,
+          fid: identity.fid,
+          username: identity.username || "you",
+          address: identity.address
+        };
 
-        const login = await apiPost(
-          "/api/auth/login",
-          {
-            provider: "farcaster",
-            userId: resolvedUserId,
-            fid: identity.fid,
-            username: identity.username || "you",
-            address: identity.address
-          },
-          { authToken }
-        );
+        let login;
+        try {
+          login = await apiPost("/api/auth/login", loginPayload);
+        } catch (err) {
+          const msg = String(err?.message || "");
+          const requiresAuth = msg.includes("missing_auth_bearer") || msg.includes("invalid_quick_auth_token") || msg.includes("auth_required");
+          if (!requiresAuth) throw err;
+
+          const cachedToken = sdk.quickAuth?.token || readLocal(LS_KEYS.quickAuthToken, "");
+          if (!cachedToken) {
+            if (!cancelled) setConnectHint("Tap Connect Mini App to verify your Farcaster session");
+            return;
+          }
+          login = await apiPost("/api/auth/login", loginPayload, { authToken: cachedToken });
+        }
 
         if (cancelled) return;
         setUserId(login.session.userId);
@@ -1728,8 +1729,6 @@ export default function App() {
     </div>
   );
 }
-
-
 
 
 

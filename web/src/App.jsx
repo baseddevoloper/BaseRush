@@ -838,9 +838,40 @@ export default function App() {
     return identity;
   }
 
+  async function loginWithPreferredSession(identity, preferredUserId) {
+    const resolvedUserId = preferredUserId?.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
+
+    const quickToken = await getQuickAuthToken();
+    if (quickToken) {
+      try {
+        return await apiPost(
+          "/api/auth/login",
+          {
+            provider: "farcaster",
+            userId: resolvedUserId,
+            fid: identity.fid,
+            username: identity.username || "you",
+            address: identity.address
+          },
+          { authToken: quickToken }
+        );
+      } catch {
+        // fall back to base wallet session
+      }
+    }
+
+    return apiPost("/api/auth/login", {
+      provider: "base",
+      userId: resolvedUserId,
+      fid: identity.fid,
+      username: identity.username || "you",
+      address: identity.address
+    });
+  }
+
   async function handleConnect() {
     setLoading(true);
-    setConnectHint("Connecting mini app wallet...");
+    setConnectHint("Requesting session and wallet approval...");
     try {
       const liveInMini = await withTimeout(() => sdk.isInMiniApp(), 1600, "isInMiniApp")
         .catch(() => typeof window !== "undefined" && !!(window.miniapp?.sdk || window.farcaster));
@@ -848,17 +879,7 @@ export default function App() {
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
       const identity = await resolveMiniAppIdentity({ interactive: true });
-      const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
-      const loginPayload = {
-        provider: "base",
-        userId: resolvedUserId,
-        fid: identity.fid,
-        username: identity.username || "you",
-        address: identity.address
-      };
-
-      setConnectHint("Connecting wallet session...");
-      const login = await apiPost("/api/auth/login", loginPayload);
+      const login = await loginWithPreferredSession(identity, userId);
 
       setConnectHint(identity.address ? `Connected wallet: ${identity.address}` : "Connected in mini app");
       setUserId(login.session.userId);
@@ -880,17 +901,8 @@ export default function App() {
     async function runAutoConnect() {
       setLoading(true);
       try {
-        const identity = await resolveMiniAppIdentity();
-        const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
-        const loginPayload = {
-          provider: "base",
-          userId: resolvedUserId,
-          fid: identity.fid,
-          username: identity.username || "you",
-          address: identity.address
-        };
-
-        const login = await apiPost("/api/auth/login", loginPayload);
+        const identity = await resolveMiniAppIdentity({ interactive: true });
+        const login = await loginWithPreferredSession(identity, userId);
 
         if (cancelled) return;
         setUserId(login.session.userId);

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,9 @@ const db = {
   notifications: new Map(),
   idempotency: new Map(),
   onchainTxs: new Map(),
-  copySettings: new Map()
+  copySettings: new Map(),
+  rateLimits: new Map(),
+  webhookReplay: new Map()
 };
 
 const TOKEN_REGISTRY = {
@@ -96,6 +99,16 @@ const FC_OG_DESCRIPTION = process.env.FC_OG_DESCRIPTION || "Social trading feed 
 const FC_NOINDEX = String(process.env.FC_NOINDEX || "false").toLowerCase() === "true";
 const FC_PRIMARY_CATEGORY = process.env.FC_PRIMARY_CATEGORY || "finance";
 const FC_TAGS = process.env.FC_TAGS || "base,trading,socialfi,copytrade,defi";
+const RATE_LIMIT_ENABLED = process.env.NODE_ENV === "test" ? false : String(process.env.RATE_LIMIT_ENABLED || "true") === "true";
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 120);
+const RATE_LIMIT_TRADE_MAX = Number(process.env.RATE_LIMIT_TRADE_MAX || 30);
+const BODY_MAX_BYTES = Number(process.env.BODY_MAX_BYTES || 256 * 1024);
+const FC_WEBHOOK_SECRET = process.env.FC_WEBHOOK_SECRET || "";
+const FC_WEBHOOK_SIG_HEADER = (process.env.FC_WEBHOOK_SIG_HEADER || "x-farcaster-signature").toLowerCase();
+const FC_WEBHOOK_TS_HEADER = (process.env.FC_WEBHOOK_TS_HEADER || "x-farcaster-timestamp").toLowerCase();
+const FC_WEBHOOK_MAX_SKEW_MS = Number(process.env.FC_WEBHOOK_MAX_SKEW_MS || 5 * 60 * 1000);
+const ALLOW_LOCAL_SIGNER_IN_PROD = String(process.env.ALLOW_LOCAL_SIGNER_IN_PROD || "false") === "true";
 
 function normalizePlainText(value, maxLen) {
   const safe = String(value || "")
@@ -763,11 +776,111 @@ function getContentType(file) {
   return "text/html";
 }
 
-async function parseBody(req) {
+async function readRawBody(req, maxBytes = BODY_MAX_BYTES) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
-  const raw = Buffer.concat(chunks).toString("utf8") || "{}";
-  return JSON.parse(raw);
+  let size = 0;
+  for await (const c of req) {
+    size += c.length;
+    if (size > maxBytes) {
+      const err = new Error("payload_too_large");
+      err.status = 413;
+      throw err;
+    }
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function parseBody(req) {
+  const raw = (await readRawBody(req)).trim();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const err = new Error("invalid_json");
+    err.status = 400;
+    throw err;
+  }
+}
+
+function normalizeIp(req) {
+  const xff = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return xff || req.socket?.remoteAddress || "unknown";
+}
+
+function isTradeEndpoint(pathname) {
+  return pathname.startsWith("/api/trade/") || pathname.startsWith("/api/copytrade/") || pathname.startsWith("/api/onchain/");
+}
+
+function applyRateLimit(req, pathname) {
+  if (!RATE_LIMIT_ENABLED || req.method === "OPTIONS") return null;
+  if (!pathname.startsWith("/api/")) return null;
+
+  const ip = normalizeIp(req);
+  const scope = isTradeEndpoint(pathname) ? "trade" : "default";
+  const max = scope === "trade" ? RATE_LIMIT_TRADE_MAX : RATE_LIMIT_MAX;
+  const now = Date.now();
+  const key = ip + ":" + scope;
+  const current = db.rateLimits.get(key);
+
+  if (!current || now - current.windowStart > RATE_LIMIT_WINDOW_MS) {
+    db.rateLimits.set(key, { windowStart: now, count: 1 });
+    return null;
+  }
+
+  current.count += 1;
+  if (current.count > max) {
+    const retryAfter = Math.max(1, Math.ceil((RATE_LIMIT_WINDOW_MS - (now - current.windowStart)) / 1000));
+    return { retryAfter };
+  }
+
+  return null;
+}
+
+function isLocalSignerAllowed() {
+  if (!ENABLE_REAL_ONCHAIN) return true;
+  if (!SERVER_SIGNER_PRIVATE_KEY) return false;
+  if (process.env.NODE_ENV !== "production") return true;
+  return ALLOW_LOCAL_SIGNER_IN_PROD;
+}
+
+function getHeader(req, name) {
+  const v = req.headers[name];
+  if (Array.isArray(v)) return v[0] || "";
+  return String(v || "");
+}
+
+function verifyFarcasterWebhook(req, rawBody) {
+  if (!FC_WEBHOOK_SECRET) return { ok: true, skipped: true };
+
+  const sig = getHeader(req, FC_WEBHOOK_SIG_HEADER).replace(/^sha256=/, "").trim();
+  const ts = getHeader(req, FC_WEBHOOK_TS_HEADER).trim();
+  if (!sig || !ts) return { ok: false, code: 401, error: "missing_webhook_signature" };
+
+  const tsNum = Number(ts);
+  if (!Number.isFinite(tsNum)) return { ok: false, code: 401, error: "invalid_webhook_timestamp" };
+
+  const now = Date.now();
+  if (Math.abs(now - tsNum) > FC_WEBHOOK_MAX_SKEW_MS) return { ok: false, code: 401, error: "stale_webhook_timestamp" };
+
+  const replayKey = ts + ":" + sig;
+  if (db.webhookReplay.has(replayKey)) return { ok: false, code: 409, error: "replayed_webhook" };
+
+  const payload = ts + "." + rawBody;
+  const expected = crypto.createHmac("sha256", FC_WEBHOOK_SECRET).update(payload).digest("hex");
+  const sigBuf = Buffer.from(sig, "hex");
+  const expBuf = Buffer.from(expected, "hex");
+  if (!sigBuf.length || sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return { ok: false, code: 401, error: "invalid_webhook_signature" };
+  }
+
+  db.webhookReplay.set(replayKey, now);
+  const cutoff = now - FC_WEBHOOK_MAX_SKEW_MS * 2;
+  for (const [k, t] of db.webhookReplay.entries()) {
+    if (t < cutoff) db.webhookReplay.delete(k);
+  }
+
+  return { ok: true, skipped: false };
 }
 
 async function serveStatic(file, res) {
@@ -784,6 +897,14 @@ async function serveStatic(file, res) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost:3000");
   const pathNoSlash = url.pathname.startsWith("/") ? url.pathname.slice(1) : url.pathname;
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+
+  const limited = applyRateLimit(req, url.pathname);
+  if (limited) {
+    res.setHeader("Retry-After", String(limited.retryAfter));
+    return json(res, 429, { ok: false, error: "rate_limited", retryAfter: limited.retryAfter });
+  }
 
   if (req.method === "GET" && url.pathname === "/.well-known/farcaster.json") {
     const dynamicManifest = buildFarcasterManifestFromEnv();
@@ -794,6 +915,23 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/farcaster/webhook") {
+    try {
+      const raw = await readRawBody(req);
+      const verified = verifyFarcasterWebhook(req, raw);
+      if (!verified.ok) return json(res, verified.code || 401, { ok: false, error: verified.error });
+
+      const event = raw ? JSON.parse(raw) : {};
+      return json(res, 200, {
+        ok: true,
+        received: true,
+        verified: !verified.skipped,
+        eventType: event?.type || null
+      });
+    } catch (err) {
+      return json(res, httpStatusFromError(err), { ok: false, error: err.message || "webhook_failed" });
+    }
+  }
   if (req.method === "POST" && ["/api/auth/login", "/api/auth/farcaster/login", "/api/auth/base/login"].includes(url.pathname)) {
     const body = await parseBody(req);
     const fromPath = url.pathname.includes("/farcaster/") ? "farcaster" : url.pathname.includes("/base/") ? "base" : null;
@@ -1005,6 +1143,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/trade/execute-onchain") {
+    if (!isLocalSignerAllowed()) return json(res, 503, { ok: false, error: "local_signer_blocked_in_production" });
     const { userId, token, side = "BUY", amountUsdc, tokenAmount, sellPercent, idempotencyKey, onchain = {} } = await parseBody(req);
     if (!userId || !token || !idempotencyKey) return json(res, 400, { ok: false, error: "userId, token, idempotencyKey required" });
 
@@ -1067,6 +1206,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/copytrade/execute-onchain") {
+    if (!isLocalSignerAllowed()) return json(res, 503, { ok: false, error: "local_signer_blocked_in_production" });
     const {
       followerUserId,
       leaderUserId,
@@ -1167,6 +1307,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/onchain/smoke") {
+    if (!isLocalSignerAllowed()) return json(res, 503, { ok: false, error: "local_signer_blocked_in_production" });
     const { userId = "guest", token = "ETH", side = "BUY", amountUsdc = 1, tokenAmount = 0, idempotencyKey = "smoke_" + Date.now(), onchain = {} } = await parseBody(req);
     try {
       const user = getOrCreateUser(userId);
@@ -1208,6 +1349,8 @@ const server = createServer(async (req, res) => {
         baseRpcConfigured: !!BASE_RPC_URL,
         executorConfigured: !!TRADE_EXECUTOR_ADDRESS,
         signerConfigured: !!SERVER_SIGNER_PRIVATE_KEY,
+        signerStrategy: SERVER_SIGNER_PRIVATE_KEY ? "local_private_key" : "none",
+        localSignerAllowed: isLocalSignerAllowed(),
         executorAddress: TRADE_EXECUTOR_ADDRESS || null,
         functionName: TRADE_EXECUTOR_FUNCTION,
         abiEntries: TRADE_EXECUTOR_ABI.length,

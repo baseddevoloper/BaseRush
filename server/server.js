@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
+import { Attribution } from "ox/erc8021";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +48,24 @@ const BASE_RPC_URL = process.env.BASE_RPC_URL || "";
 const TRADE_EXECUTOR_ADDRESS = process.env.TRADE_EXECUTOR_ADDRESS || "";
 const SERVER_SIGNER_PRIVATE_KEY = process.env.SERVER_SIGNER_PRIVATE_KEY || "";
 const TRADE_EXECUTOR_FUNCTION = process.env.TRADE_EXECUTOR_FUNCTION || "executeTrade";
+const BUILDER_CODE = process.env.BUILDER_CODE || "bc_g19kvpy7";
+const BUILDER_DATA_SUFFIX = (() => {
+  const raw = String(process.env.BUILDER_DATA_SUFFIX || "").trim();
+  if (raw) return raw.startsWith("0x") ? raw : "0x" + raw;
+  try {
+    if (!BUILDER_CODE) return "";
+    return Attribution.toDataSuffix({ codes: [BUILDER_CODE] });
+  } catch {
+    return "";
+  }
+})();
+
+function appendBuilderDataSuffix(calldata) {
+  if (!BUILDER_DATA_SUFFIX) return calldata;
+  const body = String(calldata || "").replace(/^0x/, "");
+  const suffix = String(BUILDER_DATA_SUFFIX).replace(/^0x/, "");
+  return "0x" + body + suffix;
+}
 const DEFAULT_TRADE_EXECUTOR_ABI = [
   "function executeTrade(address token,uint8 side,uint256 amountUsdc,uint256 minOut,address recipient,bytes32 orderId)"
 ];
@@ -595,7 +614,7 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
 
   const txReq = {
     to: TRADE_EXECUTOR_ADDRESS,
-    data,
+    data: appendBuilderDataSuffix(data),
     value: onchain.valueWei ? BigInt(onchain.valueWei) : 0n
   };
 
@@ -620,7 +639,9 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
         simulation: {
           functionName: functionName || TRADE_EXECUTOR_FUNCTION,
           args: args || [],
-          returnData: callOut
+          returnData: callOut,
+          builderCode: BUILDER_CODE || null,
+          builderSuffixApplied: !!BUILDER_DATA_SUFFIX
         }
       },
       quote,
@@ -646,7 +667,9 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
       explorerUrl: "https://basescan.org/tx/" + sent.hash,
       confirmedAt: new Date().toISOString(),
       blockNumber: receipt.blockNumber,
-      quote
+      quote,
+      builderCode: BUILDER_CODE || null,
+      builderSuffixApplied: !!BUILDER_DATA_SUFFIX
     },
     mode: "ONCHAIN_REAL"
   };
@@ -1112,7 +1135,9 @@ const server = createServer(async (req, res) => {
         executorAddress: TRADE_EXECUTOR_ADDRESS || null,
         functionName: TRADE_EXECUTOR_FUNCTION,
         abiEntries: TRADE_EXECUTOR_ABI.length,
-        argsTemplate: TRADE_EXECUTOR_ARGS_TEMPLATE
+        argsTemplate: TRADE_EXECUTOR_ARGS_TEMPLATE,
+        builderCode: BUILDER_CODE || null,
+        builderSuffixConfigured: !!BUILDER_DATA_SUFFIX
       }
     });
   }

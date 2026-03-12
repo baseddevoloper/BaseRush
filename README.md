@@ -115,3 +115,13 @@ Manifest durumu ornegi:
 
 
 
+
+## Builder Code Attribution (Base)
+Server-side onchain tx'lerde builder code otomatik olarak calldata sonuna (ERC-8021 data suffix) eklenir.
+
+Env:
+- `BUILDER_CODE=bc_g19kvpy7`
+- Opsiyonel override: `BUILDER_DATA_SUFFIX=0x...`
+
+Kontrol:
+- `GET /api/onchain/config` -> `builderCode`, `builderSuffixConfigured`

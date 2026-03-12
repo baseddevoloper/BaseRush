@@ -445,6 +445,8 @@ export default function App() {
   const [onchainConfig, setOnchainConfig] = useState(null);
   const [smokeStatus, setSmokeStatus] = useState(null);
   const [isInMiniAppContext, setIsInMiniAppContext] = useState(false);
+  const [autoConnectTried, setAutoConnectTried] = useState(false);
+  const [connectHint, setConnectHint] = useState("");
   const [notificationState, setNotificationState] = useState({
     status: "idle",
     message: "",
@@ -659,20 +661,106 @@ export default function App() {
     setInbox(inboxOut.items || []);
   }
 
+  async function resolveMiniAppIdentity() {
+    const identity = { fid: null, username: null, address: null };
+
+    try {
+      const ctx = await sdk.context;
+      identity.fid = Number(ctx?.user?.fid || 0) || null;
+      identity.username = ctx?.user?.username || null;
+      identity.address =
+        ctx?.user?.verifiedAddresses?.ethAddresses?.[0] ||
+        ctx?.user?.custodyAddress ||
+        null;
+    } catch {
+      // ignore context read errors
+    }
+
+    try {
+      const provider = await sdk.wallet.getEthereumProvider();
+      if (provider?.request) {
+        const accounts = await provider.request({ method: "eth_accounts" });
+        if (Array.isArray(accounts) && accounts[0]) identity.address = String(accounts[0]);
+      }
+    } catch {
+      // wallet may be unavailable in some clients
+    }
+
+    return identity;
+  }
+
   async function handleConnect() {
     setLoading(true);
     try {
-      const resolvedUserId = userId.trim() || `arena_${Date.now()}`;
-      const login = await apiPost("/api/auth/login", { provider: "base", userId: resolvedUserId, username: "you" });
+      let login;
+
+      if (isInMiniAppContext) {
+        const identity = await resolveMiniAppIdentity();
+        const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
+        login = await apiPost("/api/auth/login", {
+          provider: "farcaster",
+          userId: resolvedUserId,
+          fid: identity.fid,
+          username: identity.username || "you",
+          address: identity.address
+        });
+        setConnectHint(identity.address ? `Wallet: ${identity.address}` : "Connected via Farcaster");
+      } else {
+        const resolvedUserId = userId.trim() || `arena_${Date.now()}`;
+        login = await apiPost("/api/auth/login", { provider: "base", userId: resolvedUserId, username: "you" });
+        setConnectHint("Connected in web mode");
+      }
+
       setUserId(login.session.userId);
       setConnected(true);
+      setAutoConnectTried(true);
       await refreshSummary(login.session.userId);
     } catch (err) {
+      setConnectHint(`Connect failed: ${err.message}`);
       alert(`Connect failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!isInMiniAppContext || connected || loading || autoConnectTried) return;
+
+    let cancelled = false;
+    async function runAutoConnect() {
+      setLoading(true);
+      try {
+        const identity = await resolveMiniAppIdentity();
+        const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
+
+        const login = await apiPost("/api/auth/login", {
+          provider: "farcaster",
+          userId: resolvedUserId,
+          fid: identity.fid,
+          username: identity.username || "you",
+          address: identity.address
+        });
+
+        if (cancelled) return;
+        setUserId(login.session.userId);
+        setConnected(true);
+        setConnectHint(identity.address ? `Wallet: ${identity.address}` : "Connected via Farcaster");
+        await refreshSummary(login.session.userId);
+      } catch (err) {
+        if (!cancelled) setConnectHint(`Auto connect failed: ${err.message}`);
+      } finally {
+        if (!cancelled) {
+          setAutoConnectTried(true);
+          setLoading(false);
+        }
+      }
+    }
+
+    runAutoConnect();
+    return () => {
+      cancelled = true;
+    };
+  }, [isInMiniAppContext, connected, loading, autoConnectTried, userId]);
 
   async function applyContractToken() {
     const normalized = contractInput.trim();
@@ -944,6 +1032,7 @@ export default function App() {
               <RefreshCw className="mr-2 h-4 w-4" /> Refresh
             </Button>
           </div>
+          {connectHint && <p className="text-xs text-muted-foreground">{connectHint}</p>}
         </CardContent>
       </Card>
 
@@ -1449,8 +1538,6 @@ export default function App() {
     </div>
   );
 }
-
-
 
 
 

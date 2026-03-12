@@ -989,6 +989,24 @@ function enforceUserQuickAuthBinding(userId, authResult) {
   return user;
 }
 
+function isWalletSessionUser(userId) {
+  const user = db.users.get(String(userId || ""));
+  return !!(user?.auth?.provider === "base" && user?.auth?.address);
+}
+
+async function enforceRequestAuth(req, userId) {
+  if (!FC_AUTH_REQUIRED) return;
+  try {
+    const auth = await requireQuickAuth(req);
+    enforceUserQuickAuthBinding(userId, auth);
+  } catch (err) {
+    if (String(err?.message || "") === "missing_auth_bearer" && isWalletSessionUser(userId)) {
+      return;
+    }
+    throw err;
+  }
+}
+
 function getAuthDebugSnapshot() {
   return {
     authRequired: FC_AUTH_REQUIRED,
@@ -1091,8 +1109,7 @@ const server = createServer(async (req, res) => {
     const { userId, amount } = await parseBody(req);
     if (FC_AUTH_REQUIRED) {
       try {
-        const auth = await requireQuickAuth(req);
-        enforceUserQuickAuthBinding(userId, auth);
+        await enforceRequestAuth(req, userId);
       } catch (err) {
         return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
       }
@@ -1109,8 +1126,7 @@ const server = createServer(async (req, res) => {
     if (!userId || !idempotencyKey) return json(res, 400, { ok: false, error: "userId and idempotencyKey required" });
     if (FC_AUTH_REQUIRED) {
       try {
-        const auth = await requireQuickAuth(req);
-        enforceUserQuickAuthBinding(userId, auth);
+        await enforceRequestAuth(req, userId);
       } catch (err) {
         return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
       }
@@ -1229,8 +1245,7 @@ const server = createServer(async (req, res) => {
     if (!userId) return json(res, 400, { ok: false, error: "userId required" });
     if (FC_AUTH_REQUIRED) {
       try {
-        const auth = await requireQuickAuth(req);
-        enforceUserQuickAuthBinding(userId, auth);
+        await enforceRequestAuth(req, userId);
       } catch (err) {
         return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
       }
@@ -1267,8 +1282,7 @@ const server = createServer(async (req, res) => {
     if (!userId || !token || !idempotencyKey) return json(res, 400, { ok: false, error: "userId, token, idempotencyKey required" });
     if (FC_AUTH_REQUIRED) {
       try {
-        const auth = await requireQuickAuth(req);
-        enforceUserQuickAuthBinding(userId, auth);
+        await enforceRequestAuth(req, userId);
       } catch (err) {
         return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
       }
@@ -1316,8 +1330,7 @@ const server = createServer(async (req, res) => {
     if (!userId || !token || !idempotencyKey) return json(res, 400, { ok: false, error: "userId, token, idempotencyKey required" });
     if (FC_AUTH_REQUIRED) {
       try {
-        const auth = await requireQuickAuth(req);
-        enforceUserQuickAuthBinding(userId, auth);
+        await enforceRequestAuth(req, userId);
       } catch (err) {
         return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
       }
@@ -1400,8 +1413,7 @@ const server = createServer(async (req, res) => {
     }
     if (FC_AUTH_REQUIRED) {
       try {
-        const auth = await requireQuickAuth(req);
-        enforceUserQuickAuthBinding(followerUserId, auth);
+        await enforceRequestAuth(req, followerUserId);
       } catch (err) {
         return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
       }
@@ -1495,8 +1507,7 @@ const server = createServer(async (req, res) => {
     const { userId = "guest", token = "ETH", side = "BUY", amountUsdc = 1, tokenAmount = 0, idempotencyKey = "smoke_" + Date.now(), onchain = {} } = await parseBody(req);
     if (FC_AUTH_REQUIRED) {
       try {
-        const auth = await requireQuickAuth(req);
-        enforceUserQuickAuthBinding(userId, auth);
+        await enforceRequestAuth(req, userId);
       } catch (err) {
         return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
       }

@@ -461,6 +461,8 @@ export default function App() {
   const [isInMiniAppContext, setIsInMiniAppContext] = useState(false);
   const [autoConnectTried, setAutoConnectTried] = useState(false);
   const [connectHint, setConnectHint] = useState("");
+  const [miniContext, setMiniContext] = useState(null);
+  const [manifestStatus, setManifestStatus] = useState(null);
   const [notificationState, setNotificationState] = useState({
     status: "idle",
     message: "",
@@ -553,6 +555,42 @@ export default function App() {
       });
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMiniContext() {
+      if (!isInMiniAppContext) {
+        setMiniContext(null);
+        return;
+      }
+      try {
+        const ctx = await withTimeout(() => sdk.context, 1800, "sdk.context");
+        if (!cancelled) setMiniContext(ctx || null);
+      } catch {
+        if (!cancelled) setMiniContext(null);
+      }
+    }
+    loadMiniContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [isInMiniAppContext]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadManifestStatus() {
+      try {
+        const out = await apiGet("/api/miniapp/manifest-status");
+        if (!cancelled) setManifestStatus(out.manifest || null);
+      } catch {
+        if (!cancelled) setManifestStatus(null);
+      }
+    }
+    loadManifestStatus();
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -1016,6 +1054,48 @@ export default function App() {
       setLoading(false);
     }
   }
+  async function handleComposeCast() {
+    try {
+      const text = `I am trading ${activeToken} on BaseRush`;
+      await sdk.actions.composeCast({ text, embeds: ["https://baserush.app"] });
+      setConnectHint("Compose opened in Farcaster");
+    } catch (err) {
+      setConnectHint(`Compose failed: ${err?.message || "unknown_error"}`);
+    }
+  }
+
+  async function handleViewMiniProfile() {
+    try {
+      const fid = Number(miniContext?.user?.fid || 0);
+      if (!fid) {
+        setConnectHint("Profile action unavailable: missing fid");
+        return;
+      }
+      await sdk.actions.viewProfile({ fid });
+      setConnectHint(`Opened profile fid ${fid}`);
+    } catch (err) {
+      setConnectHint(`View profile failed: ${err?.message || "unknown_error"}`);
+    }
+  }
+
+  async function handleOpenBaseScan() {
+    try {
+      const token = selectedTokenProfile?.contract || "0x4200000000000000000000000000000000000006";
+      await sdk.actions.openUrl(`https://basescan.org/token/${token}`);
+      setConnectHint("Opened BaseScan token page");
+    } catch (err) {
+      setConnectHint(`openUrl failed: ${err?.message || "unknown_error"}`);
+    }
+  }
+
+  async function handleCloseMiniApp() {
+    try {
+      await sdk.actions.close();
+    } catch (err) {
+      setConnectHint(`Close action failed: ${err?.message || "unknown_error"}`);
+    }
+  }
+
   function handleUseTokenFromExplorer(token) {
     setSelectedTokenSymbol(token.symbol);
     setContractInput(token.contract);
@@ -1397,6 +1477,42 @@ export default function App() {
 
           <Card className="rounded-2xl border-white/10">
             <CardHeader>
+              <CardTitle className="text-base">Mini App Actions</CardTitle>
+              <CardDescription>Frames v2 style actions: compose, profile, open url, close app.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border border-white/10 bg-muted/30 p-2">
+                  <p className="text-muted-foreground">FID</p>
+                  <p>{miniContext?.user?.fid || "-"}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-muted/30 p-2">
+                  <p className="text-muted-foreground">Username</p>
+                  <p>{miniContext?.user?.username ? `@${miniContext.user.username}` : "-"}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-muted/30 p-2">
+                  <p className="text-muted-foreground">Manifest Source</p>
+                  <p>{manifestStatus?.source || "unknown"}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-muted/30 p-2">
+                  <p className="text-muted-foreground">Webhook Mode</p>
+                  <p>{manifestStatus?.notificationMode || "unknown"}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="outline" onClick={handleComposeCast} disabled={loading}>Compose Cast</Button>
+                <Button variant="outline" onClick={handleViewMiniProfile} disabled={loading}>View Profile</Button>
+                <Button variant="outline" onClick={handleOpenBaseScan} disabled={loading}>Open BaseScan</Button>
+                <Button variant="outline" onClick={handleCloseMiniApp} disabled={loading}>Close Mini App</Button>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-muted/20 p-2 text-xs text-muted-foreground">
+                {manifestStatus?.webhookUrl ? `webhook: ${manifestStatus.webhookUrl}` : "webhook unknown"}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border-white/10">
+            <CardHeader>
               <CardTitle className="text-base">Onchain Status</CardTitle>
               <CardDescription>Base RPC + TradeExecutor readiness and smoke check</CardDescription>
             </CardHeader>
@@ -1555,13 +1671,6 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
-
-
 
 
 

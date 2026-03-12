@@ -942,7 +942,11 @@ export default function App() {
       sessionPromptedRef.current = false;
       if (strict) throw new Error("signature_permission_required");
       const reason = String(err?.message || "session_prompt_skipped");
-      setConnectHint(`Session prompt: ${reason}`);
+      if (/Popup window was blocked/i.test(reason)) {
+        setConnectHint("Session prompt was blocked. Tap Retry Connect to approve manually.");
+      } else {
+        setConnectHint(`Session prompt: ${reason}`);
+      }
     }
   }
 
@@ -971,9 +975,9 @@ export default function App() {
 
       await requestSessionPromptOnce({ force: true, strict: false });
       const identity = await resolveMiniAppIdentity();
-      identity.address = await ensureWalletAddress(identity);
-      const quickToken = await getQuickAuthToken({ force: true, strict: false });
-      const login = await loginWithPreferredSession(identity, userId, quickToken);
+        identity.address = await ensureWalletAddress(identity);
+        const quickToken = await getQuickAuthToken({ force: true, strict: false });
+        const login = await loginWithPreferredSession(identity, userId, quickToken);
 
       setConnectHint(identity.address ? `Connected wallet: ${identity.address}` : "Connected in mini app");
       setUserId(login.session.userId);
@@ -995,11 +999,10 @@ export default function App() {
     async function runAutoConnect() {
       setLoading(true);
       try {
-        await requestSessionPromptOnce({ strict: false });
         const identity = await resolveMiniAppIdentity();
-      identity.address = await ensureWalletAddress(identity);
-      const quickToken = await getQuickAuthToken({ force: true, strict: false });
-      const login = await loginWithPreferredSession(identity, userId, quickToken);
+        identity.address = await ensureWalletAddress(identity);
+        const quickToken = await getQuickAuthToken({ force: true, strict: false });
+        const login = await loginWithPreferredSession(identity, userId, quickToken);
 
         if (cancelled) return;
         setUserId(login.session.userId);
@@ -1924,6 +1927,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 
 

@@ -37,8 +37,8 @@ npm test
 ```
 
 ## Notlar
-- Bu MVP bir prototiptir; onchain cagrilar ve custody guvenligi mock edilmiÃƒÂ¯Ã‚Â¿Ã‚Â½tir.
-- Uretimde HSM, key management, AML/KYC ve regÃƒÂ¯Ã‚Â¿Ã‚Â½lasyon uyumlulugu eklenmelidir.
+- Bu MVP bir prototiptir; onchain cagrilar ve custody guvenligi mock edilmiÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½tir.
+- Uretimde HSM, key management, AML/KYC ve regÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½lasyon uyumlulugu eklenmelidir.
 ## Real Onchain Mod (Base RPC + TradeExecutor)
 Sunucu varsayilan olarak `ONCHAIN_MOCK` modunda calisir.
 Gercek zincir islemi icin su env degiskenlerini ayarla:
@@ -146,3 +146,14 @@ Kontrol:
 
 Kontrol:
 - `GET /api/onchain/config` -> `signerStrategy` ve `localSignerAllowed` alanlarini doner.
+## Neynar Notification Mode (Switch)
+Manifest webhook hedefini Neynar event URL'ine cevirmek icin:
+- `FC_NOTIFICATION_MODE=neynar`
+- `FC_NEYNAR_EVENT_WEBHOOK_URL=https://api.neynar.com/f/app/<APP_ID>/event`
+
+Native moda donmek icin:
+- `FC_NOTIFICATION_MODE=native`
+- `FC_WEBHOOK_URL=https://baserush.app/api/farcaster/webhook`
+
+Kontrol:
+- `GET /api/miniapp/manifest-status` -> `notificationMode`, `webhookUrl`

@@ -99,6 +99,8 @@ const FC_OG_DESCRIPTION = process.env.FC_OG_DESCRIPTION || "Social trading feed 
 const FC_NOINDEX = String(process.env.FC_NOINDEX || "false").toLowerCase() === "true";
 const FC_PRIMARY_CATEGORY = process.env.FC_PRIMARY_CATEGORY || "finance";
 const FC_TAGS = process.env.FC_TAGS || "base,trading,socialfi,copytrade,defi";
+const FC_NOTIFICATION_MODE = String(process.env.FC_NOTIFICATION_MODE || "native").toLowerCase();
+const FC_NEYNAR_EVENT_WEBHOOK_URL = process.env.FC_NEYNAR_EVENT_WEBHOOK_URL || "";
 const RATE_LIMIT_ENABLED = process.env.NODE_ENV === "test" ? false : String(process.env.RATE_LIMIT_ENABLED || "true") === "true";
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 120);
@@ -170,7 +172,11 @@ function buildFarcasterManifestFromEnv() {
   const heroImageUrl = process.env.FC_HERO_IMAGE_URL || imageUrl;
   const ogImageUrl = process.env.FC_OG_IMAGE_URL || imageUrl;
   const splashImageUrl = process.env.FC_SPLASH_IMAGE_URL || (root + "/splash.png");
-  const webhookUrl = process.env.FC_WEBHOOK_URL || (root + "/api/farcaster/webhook");
+  const webhookUrl = (
+    FC_NOTIFICATION_MODE === "neynar" && FC_NEYNAR_EVENT_WEBHOOK_URL
+      ? FC_NEYNAR_EVENT_WEBHOOK_URL
+      : (process.env.FC_WEBHOOK_URL || (root + "/api/farcaster/webhook"))
+  );
   const screenshotUrls = normalizeUrls(
     process.env.FC_SCREENSHOT_URLS ||
       `${root}/screenshots/home.png,${root}/screenshots/feed.png,${root}/screenshots/profile.png`,
@@ -1338,6 +1344,8 @@ const server = createServer(async (req, res) => {
         dynamicEnabled: dynamic,
         homeUrl: frame?.homeUrl || null,
         webhookUrl: frame?.webhookUrl || null,
+        notificationMode: FC_NOTIFICATION_MODE,
+        neynarWebhookConfigured: !!FC_NEYNAR_EVENT_WEBHOOK_URL,
         name: frame?.name || null
       }
     });

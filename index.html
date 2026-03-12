@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="base:app_id" content="69b209379652e55139e68e7f" />
+  <title>FOMO Arena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header>
+      <div class="brand-row">
+        <div>
+          <p class="kicker">BASE MINI</p>
+          <h1>FOMO Arena</h1>
+        </div>
+        <span class="pill" id="loginBadge">Guest</span>
+      </div>
+
+      <div class="header-actions">
+        <button id="connectApp" class="primary">Connect Mini App</button>
+        <button id="openPremiumFromHero" class="warn">Go Pro</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="screen-feed" class="screen">
+        <section class="panel profile-hero" id="homeProfile"></section>
+
+        <section class="panel pulse-panel">
+          <div class="row">
+            <strong>Global Pulse</strong>
+            <span class="pill" id="liveModeLabel">SIM MODE</span>
+          </div>
+          <div id="globalPulseList" class="mini-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="stat-grid" id="topStats"></div>
+        </section>
+
+        <section class="market-ticker" id="marketTicker"></section>
+
+        <section class="panel">
+          <div class="row" style="margin-bottom:8px;">
+            <strong>Token Board</strong>
+            <span class="muted tiny">Sorted by most traded</span>
+          </div>
+          <div class="token-filter-row" id="tokenFilterRow">
+            <button class="token-filter active" data-filter="most_traded">Most Traded</button>
+            <button class="token-filter" data-filter="verified">Verified</button>
+            <button class="token-filter" data-filter="in_app">In-App</button>
+            <button class="token-filter" data-filter="all">All</button>
+          </div>
+          <div id="tokenBoardList" class="mini-list"></div>
+        </section>
+
+        <section class="panel panel-title">
+          <div>
+            <strong>Whale Feed</strong>
+            <p class="muted tiny">Live buys, sells, and PnL</p>
+          </div>
+          <span class="badge hot">LIVE</span>
+        </section>
+        <div id="feedList"></div>
+      </section>
+
+      <section id="screen-token" class="screen hidden">
+        <div class="panel panel-title token-head">
+          <button id="backToFeed" class="ghost">Back</button>
+          <div>
+            <strong id="tokenTitle">Token</strong>
+            <p class="muted tiny" id="tokenSubTitle">Token room</p>
+          </div>
+          <span class="badge hot">TOKEN</span>
+        </div>
+
+        <div class="panel token-hero" id="tokenHero"></div>
+
+        <div class="panel">
+          <div class="row">
+            <strong>24h Pulse</strong>
+            <span class="muted tiny" id="sparklineDelta">-</span>
+          </div>
+          <div id="sparklineWrap" class="sparkline-wrap"></div>
+        </div>
+
+        <div class="panel">
+          <div class="row">
+            <strong>Write Your Token Note</strong>
+            <span class="badge hot">SOCIAL</span>
+          </div>
+          <textarea id="tokenNoteInput" placeholder="Bought this token? Share your thesis in one line..."></textarea>
+          <button id="sendTokenNote" class="primary wide">Post Note</button>
+          <div id="tokenNoteList" class="mini-list"></div>
+        </div>
+
+        <div class="panel premium-panel">
+          <div class="row">
+            <strong>Alpha Signal</strong>
+            <span class="badge hot">PRO</span>
+          </div>
+          <p class="muted tiny" id="proInsightText">AI trend and risk signal appears here.</p>
+          <button id="openPremiumFromToken" class="warn wide">Unlock Pro Copy</button>
+        </div>
+
+        <div class="panel">
+          <strong>Top Buyers</strong>
+          <div id="topBuyerList" class="mini-list"></div>
+        </div>
+
+        <div class="panel">
+          <strong>Live Traders</strong>
+          <div id="tokenTraderList" class="mini-list"></div>
+        </div>
+
+        <div class="panel">
+          <strong>In-App Holder Heat</strong>
+          <div id="tokenHolderList" class="mini-list"></div>
+        </div>
+      </section>
+
+      <section id="screen-wallet" class="screen hidden">
+        <div class="panel">
+          <div class="row"><strong>Bag</strong><strong id="walletBalance"></strong></div>
+          <input id="depositInput" placeholder="USDC deposit amount" type="number" />
+          <button id="depositBtn" class="primary">Top Up USDC</button>
+        </div>
+        <div id="holdingList"></div>
+      </section>
+
+      <section id="screen-following" class="screen hidden">
+        <div class="panel panel-title"><strong>Watchlist</strong></div>
+        <div id="followingList"></div>
+      </section>
+
+      <section id="screen-notifications" class="screen hidden">
+        <div class="panel panel-title"><strong>Pings</strong></div>
+        <div id="notificationList"></div>
+      </section>
+
+      <section id="screen-profile" class="screen hidden">
+        <div class="panel" id="profileCard"></div>
+      </section>
+
+      <section id="screen-premium" class="screen hidden">
+        <div class="panel premium-panel" id="premiumBox"></div>
+      </section>
+    </main>
+
+    <nav class="tabs">
+      <button class="tab active" id="tab-feed" data-tab="feed">Home</button>
+      <button class="tab" id="tab-wallet" data-tab="wallet">Bag</button>
+      <button class="tab" id="tab-following" data-tab="following">Watch</button>
+      <button class="tab" id="tab-notifications" data-tab="notifications">Pings</button>
+      <button class="tab" id="tab-profile" data-tab="profile">Me</button>
+    </nav>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,37 @@
+{
+  "name": "base-fomo-arena-miniapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Base/Farcaster social trader mini app prototype",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node tests/run-tests.mjs",
+    "dev:web": "vite",
+    "build:web": "vite build",
+    "preview:web": "vite preview",
+    "onchain:smoke": "node scripts/onchain_smoke.mjs",
+    "contract:compile": "hardhat compile",
+    "contract:deploy:base": "hardhat run scripts/deploy-trade-executor.cjs --network base",
+    "contract:deploy:base-sepolia": "hardhat run scripts/deploy-trade-executor.cjs --network baseSepolia"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.3.1",
+    "ethers": "^6.16.0",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@vitejs/plugin-react": "^5.1.4",
+    "autoprefixer": "^10.4.27",
+    "hardhat": "^2.28.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.17",
+    "vite": "^7.3.1"
+  }
+}

@@ -1250,16 +1250,47 @@ export default function App() {
           <div className="rounded-lg border border-white/10 bg-muted/30 px-3 py-2 text-sm">
             Active profile: <span className="font-medium">{profileHandle}</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Button onClick={handleConnect} disabled={loading}>{loading ? "Connecting..." : connected ? "Connected" : "Connect Wallet"}</Button>
-            <Button variant="outline" onClick={() => refreshSummary()} disabled={!connected || loading}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+          <div className="rounded-2xl border border-white/15 bg-black/25 p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Wallet Session</p>
+                <p className="text-sm font-medium text-foreground">
+                  {connected
+                    ? wagmiAddress
+                      ? `${wagmiAddress.slice(0, 6)}...${wagmiAddress.slice(-4)}`
+                      : "Connected"
+                    : "Not connected"}
+                </p>
+              </div>
+              <span className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-emerald-400" : "bg-zinc-500"}`} />
+            </div>
+
+            <Button
+              onClick={handleConnect}
+              disabled={loading}
+              className="mt-3 h-11 w-full rounded-xl bg-primary text-primary-foreground shadow-[0_0_32px_-14px_hsl(var(--primary))] transition-all hover:brightness-110"
+            >
+              {loading ? "Connecting wallet..." : connected ? "Wallet Connected" : "Connect Wallet"}
             </Button>
+
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={() => refreshSummary()} disabled={!connected || loading}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+              </Button>
+              <Button variant="ghost" disabled className="justify-start text-xs text-muted-foreground">
+                {isInMiniAppContext ? "Mini App: Live" : "Mini App: Browser"}
+              </Button>
+            </div>
           </div>
-          {connectHint && <p className="text-xs text-muted-foreground">{connectHint
-            .replace("open_in_farcaster_or_base_app", "Open this mini app inside Farcaster/Base app")
-            .replace("wallet_provider_unavailable", "Wallet provider is not available in this client")
-            .replace("wallet_not_connected", "Wallet connection was not approved")}</p>}
+
+          {connectHint && (
+            <div className="rounded-xl border border-white/10 bg-muted/30 px-3 py-2">
+              <p className="text-xs text-muted-foreground">{connectHint
+                .replace("open_in_farcaster_or_base_app", "Open this mini app inside Farcaster/Base app")
+                .replace("wallet_provider_unavailable", "Wallet provider is not available in this client")
+                .replace("wallet_not_connected", "Wallet connection was not approved")}</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

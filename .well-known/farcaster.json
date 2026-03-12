@@ -13,7 +13,7 @@
                   "buttonTitle":  "Open BaseRush",
                   "splashImageUrl":  "https://baserush.app/splash.png",
                   "splashBackgroundColor":  "#0B0F14",
-                  "webhookUrl":  "https://baserush.app/api/farcaster/webhook",
+                  "webhookUrl":  "https://api.neynar.com/f/app/37d37e49-ddd2-40ac-9ab5-5e87736b126d/event",
                   "subtitle":  "Trade feed on Base",
                   "description":  "Track traders, see live activity, and execute USDC trades on Base with social insights",
                   "screenshotUrls":  [
@@ -52,7 +52,7 @@
                     "buttonTitle":  "Open BaseRush",
                     "splashImageUrl":  "https://baserush.app/splash.png",
                     "splashBackgroundColor":  "#0B0F14",
-                    "webhookUrl":  "https://baserush.app/api/farcaster/webhook",
+                    "webhookUrl":  "https://api.neynar.com/f/app/37d37e49-ddd2-40ac-9ab5-5e87736b126d/event",
                     "subtitle":  "Trade feed on Base",
                     "description":  "Track traders, see live activity, and execute USDC trades on Base with social insights",
                     "screenshotUrls":  [

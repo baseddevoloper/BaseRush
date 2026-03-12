@@ -840,7 +840,21 @@ export default function App() {
     const inMini = await isMiniAppRuntime();
     if (!inMini) throw new Error("open_in_farcaster_or_base_app");
 
-    const result = await connectAsync({ connector: farcasterMiniApp(), chainId: 8453 });
+    let result;
+    try {
+      result = await withTimeout(
+        () => connectAsync({ connector: farcasterMiniApp(), chainId: 8453 }),
+        12000,
+        "wallet.connect"
+      );
+    } catch (err) {
+      if (identity?.address) {
+        setConnectHint("Wallet approval timed out. Using mini app address.");
+        return String(identity.address);
+      }
+      throw new Error(err?.message || "wallet_connect_timeout");
+    }
+
     const connectedAddress = result?.accounts?.[0] || wagmiAddress || identity?.address || "";
     if (!connectedAddress) throw new Error("wallet_not_connected");
     return String(connectedAddress);
@@ -954,9 +968,6 @@ export default function App() {
       } catch (err) {
         if (!cancelled) {
           setConnectHint(`Auto connect failed: ${err.message}`);
-          setTimeout(() => {
-            if (!cancelled) setAutoConnectTried(false);
-          }, 2500);
         }
       } finally {
         if (!cancelled) {
@@ -1327,6 +1338,9 @@ export default function App() {
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>Mini app context: {isInMiniAppContext ? "Detected" : "Not detected yet"}</p>
             <p>Status: {loading ? "Connecting..." : "Retrying automatically..."}</p>
+            <Button className="w-full" onClick={handleConnect} disabled={loading}>
+              {loading ? "Connecting..." : "Retry Connect"}
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -1869,6 +1883,9 @@ export default function App() {
     </div>
   );
 }
+
+
+
 
 
 

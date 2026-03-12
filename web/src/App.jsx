@@ -581,6 +581,8 @@ export default function App() {
   const [inbox, setInbox] = useState([]);
   const [feed, setFeed] = useState(INITIAL_FEED);
   const [feedScope, setFeedScope] = useState("global");
+  const [friends, setFriends] = useState(FRIENDS);
+  const [referrals, setReferrals] = useState({ earnedTotal: 0, earned7d: 0, friendsReferred: 0, referralRate: 0.25, referralLink: "" });
   const [onchainConfig, setOnchainConfig] = useState(null);
   const [smokeStatus, setSmokeStatus] = useState(null);
   const [isInMiniAppContext, setIsInMiniAppContext] = useState(false);
@@ -737,7 +739,7 @@ export default function App() {
 
     const tick = async () => {
       if (cancelled) return;
-      await refreshFeed(userId, feedScope);
+      await refreshAppData(userId, feedScope);
       if (!cancelled) timer = setTimeout(tick, 5000);
     };
 
@@ -891,7 +893,7 @@ export default function App() {
 
             if (userId) {
               try {
-                await refreshSummary(userId);
+                await refreshAppData(userId, feedScope);
               } catch {
                 // summary refresh is best-effort
               }
@@ -916,31 +918,24 @@ export default function App() {
     };
   }, [lastTxLifecycle?.operationId, lastTxLifecycle?.status, lastTx?.status, lastTx?.txHash, userId]);
 
-  async function refreshFeed(nextUserId = userId, nextScope = feedScope) {
+  async function refreshAppData(nextUserId = userId, nextScope = feedScope) {
     if (!nextUserId) return;
     try {
       const out = await apiGet(
-        `/api/feed?userId=${encodeURIComponent(nextUserId)}&scope=${encodeURIComponent(nextScope)}&limit=40`
+        `/api/app/bootstrap?userId=${encodeURIComponent(nextUserId)}&feedScope=${encodeURIComponent(nextScope)}`
       );
-      if (Array.isArray(out.items)) setFeed(out.items);
+
+      setWallet(out.wallet || { usdc: 0, feesPaid: 0, realizedPnl: 0, unrealizedPnl: 0, totalPnl: 0 });
+      setPositions(out.positions || {});
+      setPremium(out.premium || { active: false, expiresAt: null });
+      setInbox(Array.isArray(out.inbox) ? out.inbox : []);
+      setFeed(Array.isArray(out.feed?.items) ? out.feed.items : []);
+      setFriends(Array.isArray(out.friends) ? out.friends : []);
+      setReferrals(out.referrals || { earnedTotal: 0, earned7d: 0, friendsReferred: 0, referralRate: 0.25, referralLink: "" });
+      if (out.copySettings) setCopySettings(out.copySettings);
     } catch {
-      // keep previous feed on transient errors
+      // keep previous snapshot on transient errors
     }
-  }
-
-  async function refreshSummary(nextUserId = userId) {
-    if (!nextUserId) return;
-    const [summary, premiumStatus, inboxOut] = await Promise.all([
-      apiGet(`/api/wallet/summary?userId=${encodeURIComponent(nextUserId)}`),
-      apiGet(`/api/premium/status?userId=${encodeURIComponent(nextUserId)}`),
-      apiGet(`/api/notifications/inbox?userId=${encodeURIComponent(nextUserId)}`)
-    ]);
-
-    setWallet(summary.wallet);
-    setPositions(summary.positions || {});
-    setPremium(premiumStatus.premium || { active: false, expiresAt: null });
-    setInbox(inboxOut.items || []);
-    void refreshFeed(nextUserId, feedScope);
   }
 
   async function resolveMiniAppIdentity() {
@@ -1120,7 +1115,7 @@ export default function App() {
       setAuthExpiresAt(login?.user?.auth?.quickAuthExp || null);
       setConnected(true);
       setAutoConnectTried(true);
-      await refreshSummary(login.session.userId);
+      await refreshAppData(login.session.userId, feedScope);
     } catch (err) {
       setConnected(false);
       setConnectHint(`Connect failed: ${err.message}`);
@@ -1147,7 +1142,7 @@ export default function App() {
         setAuthExpiresAt(login?.user?.auth?.quickAuthExp || null);
         setConnected(true);
         setConnectHint(identity.address ? `Wallet: ${identity.address}` : "Connected in mini app");
-        await refreshSummary(login.session.userId);
+        await refreshAppData(login.session.userId, feedScope);
       } catch (err) {
         if (!cancelled) {
           setConnectHint(`Auto connect failed: ${err.message}`);
@@ -1212,7 +1207,7 @@ export default function App() {
     setLoading(true);
     try {
       await apiPost("/api/balance/deposit-usdc", { userId, amount: Number(depositAmount || 0) });
-      await refreshSummary();
+      await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Deposit failed: ${err.message}`);
     } finally {
@@ -1226,7 +1221,7 @@ export default function App() {
     try {
       await requireProtectedAuth();
       await apiPost("/api/premium/activate", { userId, idempotencyKey: `premium_react_${Date.now()}` });
-      await refreshSummary();
+      await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Premium failed: ${err.message}`);
     } finally {
@@ -1257,7 +1252,7 @@ export default function App() {
         setNote("");
       }
 
-      await refreshSummary();
+      await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Buy failed: ${err.message}`);
     } finally {
@@ -1290,7 +1285,7 @@ export default function App() {
       setCustomSell("");
       setLastTx(out.tx || null);
       setLastTxLifecycle(out.txLifecycle || null);
-      await refreshSummary();
+      await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Sell failed: ${err.message}`);
     } finally {
@@ -1321,7 +1316,7 @@ export default function App() {
       }, ...prev].slice(0, 60));
       setLastTx(out.tx || null);
       setLastTxLifecycle(out.txLifecycle || null);
-      await refreshSummary();
+      await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Sell failed: ${err.message}`);
     } finally {
@@ -1354,7 +1349,7 @@ export default function App() {
       });
       setLastTx(out.tx || null);
       setLastTxLifecycle(out.txLifecycle || null);
-      await refreshSummary();
+      await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Copy trade failed: ${err.message}`);
     } finally {
@@ -1845,7 +1840,7 @@ export default function App() {
             <CardDescription>My friends performance</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            {FRIENDS.map((f) => (
+            {friends.map((f) => (
               <div key={f.id} className="rounded-xl border border-white/10 bg-muted/30 p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <strong>{f.handle}</strong>
@@ -1894,20 +1889,20 @@ export default function App() {
           <CardContent className="space-y-3">
             <div className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-sm">
               <div className="text-muted-foreground">Total earned rewards</div>
-              <div className="mt-1 text-2xl font-bold">$0.00</div>
+              <div className="mt-1 text-2xl font-bold">{money(referrals.earnedTotal || 0)}</div>
             </div>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div className="rounded-xl border border-white/10 bg-muted/30 p-3">
                 <div className="text-muted-foreground">Earned last 7d</div>
-                <div className="mt-1 font-semibold">$0</div>
+                <div className="mt-1 font-semibold">{money(referrals.earned7d || 0)}</div>
               </div>
               <div className="rounded-xl border border-white/10 bg-muted/30 p-3">
                 <div className="text-muted-foreground">Friends referred</div>
-                <div className="mt-1 font-semibold">0</div>
+                <div className="mt-1 font-semibold">{referrals.friendsReferred || 0}</div>
               </div>
             </div>
             <div className="rounded-xl border border-white/10 bg-muted/30 p-3 text-xs text-muted-foreground">
-              your referral link: baserush.app/invite/{(miniContext?.user?.username || userId || "you")}
+              your referral link: {referrals.referralLink || ("baserush.app/invite/" + (miniContext?.user?.username || userId || "you"))}
             </div>
           </CardContent>
         </Card>

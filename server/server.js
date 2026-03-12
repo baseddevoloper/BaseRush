@@ -708,6 +708,59 @@ function buildSocialFeed({ viewerUserId = "", scope = "global", limit = 40 }) {
   };
 }
 
+function buildFriendsPerformance(viewerUserId, limit = 20) {
+  const set = db.follows.get(String(viewerUserId || "")) || new Set();
+  const out = [];
+
+  set.forEach((followedUserId) => {
+    const user = db.users.get(followedUserId);
+    if (!user) return;
+    const summary = buildWalletSummary(user);
+    out.push({
+      userId: user.userId,
+      handle: user.auth?.username ? "@" + user.auth.username : "@" + user.userId,
+      pnl: Number(summary.wallet.totalPnl || 0),
+      realizedPnl: Number(summary.wallet.realizedPnl || 0),
+      unrealizedPnl: Number(summary.wallet.unrealizedPnl || 0),
+      trades: Array.isArray(user.trades) ? user.trades.length : 0,
+      followers: 0
+    });
+  });
+
+  out.forEach((row) => {
+    let c = 0;
+    db.follows.forEach((x) => {
+      if (x.has(row.userId)) c += 1;
+    });
+    row.followers = c;
+  });
+
+  return out.sort((a, b) => b.pnl - a.pnl).slice(0, Math.max(1, Math.min(100, Number(limit || 20))));
+}
+
+function buildReferralSummary(userId) {
+  const uid = String(userId || "");
+  let referredUsers = 0;
+  let earned = 0;
+
+  db.follows.forEach((set, followerId) => {
+    if (!set.has(uid)) return;
+    referredUsers += 1;
+    const follower = db.users.get(followerId);
+    const feePaid = Number(follower?.wallet?.feesPaid || 0);
+    earned += feePaid * 0.25;
+  });
+
+  return {
+    referralRate: 0.25,
+    friendsReferred: referredUsers,
+    earnedTotal: rounded(earned, 2),
+    earned7d: rounded(earned * 0.2, 2),
+    referralLink: "baserush.app/invite/" + (uid || "you")
+  };
+}
+
+
 function resolveTradeInputs(user, { token, side = "BUY", amountUsdc, tokenAmount, sellPercent }) {
   const normalizedToken = String(token || "").toUpperCase();
   const price = tokenPrices[normalizedToken];
@@ -2047,6 +2100,43 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { ok: true, operation: toPublicOnchainOperation(operation) });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/app/bootstrap") {
+    const userId = String(url.searchParams.get("userId") || "guest");
+    const feedScope = String(url.searchParams.get("feedScope") || "global");
+    const user = getOrCreateUser(userId);
+    ensurePremiumStatus(user);
+    const summary = buildWalletSummary(user);
+    const premium = user.premium;
+    const inbox = db.notifications.get(userId) || [];
+    const feed = buildSocialFeed({ viewerUserId: userId, scope: feedScope, limit: 40 });
+    const copySettings = getOrCreateCopySettings(userId);
+    const friends = buildFriendsPerformance(userId, 20);
+    const referrals = buildReferralSummary(userId);
+    return json(res, 200, {
+      ok: true,
+      userId,
+      wallet: summary.wallet,
+      positions: summary.positions || {},
+      holdings: summary.holdings || {},
+      premium,
+      inbox,
+      feed,
+      copySettings,
+      friends,
+      referrals
+    });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/social/friends") {
+    const userId = String(url.searchParams.get("userId") || "guest");
+    const limit = Number(url.searchParams.get("limit") || 20);
+    return json(res, 200, { ok: true, userId, friends: buildFriendsPerformance(userId, limit) });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/referrals/summary") {
+    const userId = String(url.searchParams.get("userId") || "guest");
+    return json(res, 200, { ok: true, userId, referrals: buildReferralSummary(userId) });
+  }
   if (req.method === "GET" && url.pathname === "/api/wallet/summary") {
     const userId = url.searchParams.get("userId") || "guest";
     const user = getOrCreateUser(userId);

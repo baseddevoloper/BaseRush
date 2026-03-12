@@ -807,7 +807,7 @@ export default function App() {
     setInbox(inboxOut.items || []);
   }
 
-  async function resolveMiniAppIdentity({ interactive = false } = {}) {
+  async function resolveMiniAppIdentity({ interactive = false, requireWallet = false } = {}) {
     const identity = { fid: null, username: null, address: null };
 
     try {
@@ -823,15 +823,24 @@ export default function App() {
     }
 
     try {
-      const provider = await withTimeout(() => sdk.wallet.getEthereumProvider(), 1800, "wallet provider");
-      if (provider?.request) {
-        let accounts = await withTimeout(() => provider.request({ method: "eth_accounts" }), 1800, "eth_accounts");
-        if ((!Array.isArray(accounts) || !accounts[0]) && interactive) {
-          accounts = await withTimeout(() => provider.request({ method: "eth_requestAccounts" }), 4000, "eth_requestAccounts");
-        }
-        if (Array.isArray(accounts) && accounts[0]) identity.address = String(accounts[0]);
+      const provider = await withTimeout(() => sdk.wallet.getEthereumProvider(), 2200, "wallet provider");
+      if (!provider?.request) {
+        if (interactive || requireWallet) throw new Error("wallet_provider_unavailable");
+        return identity;
       }
-    } catch {
+
+      let accounts = await withTimeout(() => provider.request({ method: "eth_accounts" }), 2200, "eth_accounts");
+      if ((!Array.isArray(accounts) || !accounts[0]) && interactive) {
+        accounts = await withTimeout(() => provider.request({ method: "eth_requestAccounts" }), 7000, "eth_requestAccounts");
+      }
+
+      if (Array.isArray(accounts) && accounts[0]) {
+        identity.address = String(accounts[0]);
+      } else if (interactive || requireWallet) {
+        throw new Error("wallet_not_connected");
+      }
+    } catch (err) {
+      if (interactive || requireWallet) throw err;
       // wallet provider may be unavailable on some clients
     }
 
@@ -878,7 +887,7 @@ export default function App() {
       setIsInMiniAppContext(!!liveInMini);
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
-      const identity = await resolveMiniAppIdentity({ interactive: true });
+      const identity = await resolveMiniAppIdentity({ interactive: true, requireWallet: true });
       const login = await loginWithPreferredSession(identity, userId);
 
       setConnectHint(identity.address ? `Connected wallet: ${identity.address}` : "Connected in mini app");
@@ -901,7 +910,7 @@ export default function App() {
     async function runAutoConnect() {
       setLoading(true);
       try {
-        const identity = await resolveMiniAppIdentity({ interactive: true });
+        const identity = await resolveMiniAppIdentity({ interactive: true, requireWallet: true });
         const login = await loginWithPreferredSession(identity, userId);
 
         if (cancelled) return;
@@ -1239,7 +1248,10 @@ export default function App() {
               <RefreshCw className="mr-2 h-4 w-4" /> Refresh
             </Button>
           </div>
-          {connectHint && <p className="text-xs text-muted-foreground">{connectHint.replace("open_in_farcaster_or_base_app", "Open this mini app inside Farcaster/Base app")}</p>}
+          {connectHint && <p className="text-xs text-muted-foreground">{connectHint
+            .replace("open_in_farcaster_or_base_app", "Open this mini app inside Farcaster/Base app")
+            .replace("wallet_provider_unavailable", "Wallet provider is not available in this client")
+            .replace("wallet_not_connected", "Wallet connection was not approved")}</p>}
         </CardContent>
       </Card>
 

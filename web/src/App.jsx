@@ -873,16 +873,6 @@ export default function App() {
         );
         connectedAddress = Array.isArray(accounts) ? String(accounts[0] || "") : "";
 
-        try {
-          await withTimeout(
-            () => provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }),
-            4000,
-            "wallet.switchChain"
-          );
-        } catch {
-          // keep going on chain switch failure
-        }
-
         if (connectedAddress) {
           setConnectHint("Wallet prompt approved on mobile.");
         }
@@ -931,32 +921,12 @@ export default function App() {
     });
   }
 
-  async function requestSessionPromptOnce({ force = false, strict = false } = {}) {
-    if (force) sessionPromptedRef.current = false;
-    if (sessionPromptedRef.current) return;
-    sessionPromptedRef.current = true;
-    try {
-      const nonce = `baserush${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-      await withTimeout(() => sdk.actions.signIn({ nonce }), 8000, "actions.signIn");
-    } catch (err) {
-      sessionPromptedRef.current = false;
-      if (strict) throw new Error("signature_permission_required");
-      const reason = String(err?.message || "session_prompt_skipped");
-      if (/Popup window was blocked/i.test(reason)) {
-        setConnectHint("Session prompt was blocked. Tap Retry Connect to approve manually.");
-      } else {
-        setConnectHint(`Session prompt: ${reason}`);
-      }
-    }
-  }
-
   async function handleGrantSignature() {
     setLoading(true);
-    setConnectHint("Requesting signature permission...");
+    setConnectHint("Requesting Farcaster auth signature (offchain)...");
     try {
-      await requestSessionPromptOnce({ force: true, strict: false });
       await getQuickAuthToken({ force: true, strict: true });
-      setConnectHint("Signature permission granted");
+      setConnectHint("Farcaster auth granted. No onchain tx sent.");
     } catch (err) {
       setConnectHint(`Signature failed: ${err?.message || "signature_permission_required"}`);
     } finally {
@@ -973,13 +943,12 @@ export default function App() {
       setIsInMiniAppContext(!!liveInMini);
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
-      await requestSessionPromptOnce({ force: true, strict: false });
       const identity = await resolveMiniAppIdentity();
-        identity.address = await ensureWalletAddress(identity);
-        const quickToken = await getQuickAuthToken({ force: true, strict: false });
-        const login = await loginWithPreferredSession(identity, userId, quickToken);
+      identity.address = await ensureWalletAddress(identity);
+      const quickToken = await getQuickAuthToken({ force: true, strict: false });
+      const login = await loginWithPreferredSession(identity, userId, quickToken);
 
-      setConnectHint(identity.address ? `Connected wallet: ${identity.address}` : "Connected in mini app");
+      setConnectHint(identity.address ? `Connected wallet: ${identity.address} (no onchain tx)` : "Connected in mini app (no onchain tx)");
       setUserId(login.session.userId);
       setConnected(true);
       setAutoConnectTried(true);
@@ -1000,9 +969,9 @@ export default function App() {
       setLoading(true);
       try {
         const identity = await resolveMiniAppIdentity();
-        identity.address = await ensureWalletAddress(identity);
-        const quickToken = await getQuickAuthToken({ force: true, strict: false });
-        const login = await loginWithPreferredSession(identity, userId, quickToken);
+      identity.address = await ensureWalletAddress(identity);
+      const quickToken = await getQuickAuthToken({ force: true, strict: false });
+      const login = await loginWithPreferredSession(identity, userId, quickToken);
 
         if (cancelled) return;
         setUserId(login.session.userId);
@@ -1927,6 +1896,11 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
 
 
 

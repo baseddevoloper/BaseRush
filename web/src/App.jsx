@@ -560,7 +560,8 @@ export default function App() {
     ratio: 0.2,
     maxUsdcPerTrade: 25,
     slippageBps: 100
-  }));
+  }));
+  const sessionPromptedRef = useRef(false);
 
   const profileHandle = useMemo(() => {
     const username = String(miniContext?.user?.username || "").trim();
@@ -877,7 +878,17 @@ export default function App() {
       address: identity.address
     });
   }
-
+  async function requestSessionPromptOnce() {
+    if (sessionPromptedRef.current) return;
+    sessionPromptedRef.current = true;
+    try {
+      const nonce = `baserush_${Date.now()}`;
+      await withTimeout(() => sdk.actions.signIn({ nonce }), 8000, "actions.signIn");
+    } catch (err) {
+      const reason = String(err?.message || "session_prompt_skipped");
+      setConnectHint(`Session prompt: ${reason}`);
+    }
+  }
   async function handleConnect() {
     setLoading(true);
     setConnectHint("Requesting session and wallet approval...");
@@ -887,6 +898,7 @@ export default function App() {
       setIsInMiniAppContext(!!liveInMini);
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
+      await requestSessionPromptOnce();
       const identity = await resolveMiniAppIdentity({ interactive: true, requireWallet: true });
       const login = await loginWithPreferredSession(identity, userId);
 
@@ -910,7 +922,8 @@ export default function App() {
     async function runAutoConnect() {
       setLoading(true);
       try {
-        const identity = await resolveMiniAppIdentity({ interactive: true, requireWallet: true });
+        await requestSessionPromptOnce();
+      const identity = await resolveMiniAppIdentity({ interactive: true, requireWallet: true });
         const login = await loginWithPreferredSession(identity, userId);
 
         if (cancelled) return;
@@ -1793,4 +1806,6 @@ export default function App() {
     </div>
   );
 }
+
+
 

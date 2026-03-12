@@ -763,7 +763,8 @@ export default function App() {
 
       if (isInMiniAppContext) {
         const identity = await resolveMiniAppIdentity({ interactive: true });
-        const qa = await withTimeout(() => sdk.quickAuth.getToken(), 5000, "quickAuth.getToken");
+        setConnectHint("Requesting Farcaster auth...");
+        const qa = await withTimeout(() => sdk.quickAuth.getToken(), 7000, "quickAuth.getToken");
         const authToken = qa?.token || "";
         if (!authToken) throw new Error("quick_auth_token_missing");
 
@@ -773,6 +774,7 @@ export default function App() {
           // ignore storage failures in embedded browser
         }
 
+        setConnectHint("Authorizing session...");
         const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
         login = await apiPost(
           "/api/auth/login",
@@ -811,8 +813,20 @@ export default function App() {
       setLoading(true);
       try {
         const identity = await resolveMiniAppIdentity();
-        const cachedToken = sdk.quickAuth?.token || readLocal(LS_KEYS.quickAuthToken, "");
-        if (!cachedToken) {
+        let authToken = sdk.quickAuth?.token || readLocal(LS_KEYS.quickAuthToken, "");
+        if (!authToken) {
+          try {
+            if (!cancelled) setConnectHint("Auto verifying session...");
+            const qa = await withTimeout(() => sdk.quickAuth.getToken(), 5000, "quickAuth.getToken");
+            authToken = qa?.token || "";
+            if (authToken && typeof window !== "undefined") {
+              window.localStorage.setItem(LS_KEYS.quickAuthToken, authToken);
+            }
+          } catch {
+            // requires explicit user interaction in some clients
+          }
+        }
+        if (!authToken) {
           if (!cancelled) setConnectHint("Tap Connect Mini App to verify your Farcaster session");
           return;
         }
@@ -828,7 +842,7 @@ export default function App() {
             username: identity.username || "you",
             address: identity.address
           },
-          { authToken: cachedToken }
+          { authToken }
         );
 
         if (cancelled) return;
@@ -1159,7 +1173,7 @@ export default function App() {
         <CardContent className="space-y-2">
           <Input placeholder="User ID (optional)" value={userId} onChange={(e) => setUserId(e.target.value)} />
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={handleConnect} disabled={loading}>Connect Mini App</Button>
+            <Button onClick={handleConnect} disabled={loading}>{loading ? "Connecting..." : connected ? "Connected" : "Connect Mini App"}</Button>
             <Button variant="outline" onClick={() => refreshSummary()} disabled={!connected || loading}>
               <RefreshCw className="mr-2 h-4 w-4" /> Refresh
             </Button>

@@ -264,12 +264,17 @@ async function apiPost(path, body, options = {}) {
       "Content-Type": "application/json",
       ...buildAuthHeaders(authToken)
     };
-    const res = await fetch(path, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body)
-    });
-    const data = await res.json();
+    const res = await withTimeout(
+      () =>
+        fetch(path, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body)
+        }),
+      12000,
+      `POST ${path}`
+    );
+    const data = await withTimeout(() => res.json(), 6000, `POST ${path} json`);
     return { res, data };
   };
 
@@ -289,8 +294,8 @@ async function apiPost(path, body, options = {}) {
 async function apiGet(path, options = {}) {
   const run = async (authToken) => {
     const headers = buildAuthHeaders(authToken);
-    const res = await fetch(path, { headers });
-    const data = await res.json();
+    const res = await withTimeout(() => fetch(path, { headers }), 12000, `GET ${path}`);
+    const data = await withTimeout(() => res.json(), 6000, `GET ${path} json`);
     return { res, data };
   };
 
@@ -1883,6 +1888,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 
 

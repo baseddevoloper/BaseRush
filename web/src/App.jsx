@@ -835,6 +835,68 @@ export default function App() {
 
     return () => clearTimeout(timer);
   }, [activeToken, buyAmount, userId]);
+
+  useEffect(() => {
+    const operationId = String(lastTxLifecycle?.operationId || "").trim();
+    const status = String(lastTxLifecycle?.status || lastTx?.status || "").toLowerCase();
+    if (!operationId || status !== "submitted") return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 60;
+    const pollIntervalMs = 2000;
+    let timer = null;
+
+    const pollLifecycle = async () => {
+      if (cancelled) return;
+      attempts += 1;
+
+      try {
+        const out = await apiGet("/api/onchain/operation?operationId=" + encodeURIComponent(operationId));
+        if (cancelled) return;
+
+        const op = out?.operation || null;
+        if (op) {
+          setLastTxLifecycle(op);
+          const nextStatus = String(op.status || "").toLowerCase();
+
+          if (["confirmed", "failed"].includes(nextStatus)) {
+            if (lastTx?.txHash) {
+              try {
+                const txOut = await apiGet("/api/onchain/tx?txHash=" + encodeURIComponent(lastTx.txHash));
+                if (!cancelled && txOut?.tx) setLastTx(txOut.tx);
+              } catch {
+                // tx lookup is best-effort
+              }
+            }
+
+            if (userId) {
+              try {
+                await refreshSummary(userId);
+              } catch {
+                // summary refresh is best-effort
+              }
+            }
+            return;
+          }
+        }
+      } catch {
+        // keep polling while operation is pending
+      }
+
+      if (!cancelled && attempts < maxAttempts) {
+        timer = setTimeout(pollLifecycle, pollIntervalMs);
+      }
+    };
+
+    timer = setTimeout(pollLifecycle, 1200);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [lastTxLifecycle?.operationId, lastTxLifecycle?.status, lastTx?.status, lastTx?.txHash, userId]);
+
   async function refreshSummary(nextUserId = userId) {
     if (!nextUserId) return;
     const [summary, premiumStatus, inboxOut] = await Promise.all([

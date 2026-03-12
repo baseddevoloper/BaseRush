@@ -8,7 +8,7 @@ async function main() {
 
   const usdc = process.env.USDC_BASE_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
   const uniswapRouter = process.env.UNISWAP_V3_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481";
-  const aerodromeRouter = process.env.AERODROME_ROUTER || "0xcF77a3Ba9A5CA399B7c97c74d54e5bE8D5e8f9F3";
+  const aerodromeRouter = process.env.AERODROME_ROUTER || "0xcf77a3ba9a5ca399b7c97c74d54e5be8d5e8f9f3";
   const aerodromeFactory = process.env.AERODROME_FACTORY || "0x420DD381b31aEf6683db6B902084cB0FFECe40Da";
   const defaultUniPoolFee = Number(process.env.DEFAULT_UNI_POOL_FEE || "500");
 

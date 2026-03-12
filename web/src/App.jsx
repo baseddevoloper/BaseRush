@@ -332,14 +332,6 @@ function money(n) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n || 0);
 }
 
-function formatAuthExpiry(exp) {
-  const v = Number(exp || 0);
-  if (!v) return "-";
-  const d = new Date(v * 1000);
-  if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleString();
-}
-
 function tokenFromText(text) {
   const match = String(text || "").toUpperCase().match(/\b[A-Z]{2,10}\b/);
   return match ? match[0] : "NOTE";
@@ -643,6 +635,13 @@ export default function App() {
     const copiers = premium.active ? 9 : 0;
     return { followers, following, copiers };
   }, [feed.length, premium.active]);
+  const authExpiryLabel = useMemo(() => {
+    const v = Number(authExpiresAt || 0);
+    if (!v) return "-";
+    const d = new Date(v * 1000);
+    if (Number.isNaN(d.getTime())) return "-";
+    return d.toLocaleString();
+  }, [authExpiresAt]);
 
   useEffect(() => {
     async function loadDirectory() {
@@ -1595,7 +1594,7 @@ export default function App() {
                   {authVerified ? "Refresh Auth" : "Verify Auth"}
                 </Button>
               </div>
-              <p className="mt-2 text-[11px] text-muted-foreground">Auth expires: {formatAuthExpiry(authExpiresAt)}</p>
+              <p className="mt-2 text-[11px] text-muted-foreground">Auth expires: {authExpiryLabel}</p>
             </div>
           </div>
 
@@ -2203,6 +2202,9 @@ export default function App() {
     </div>
   );
 }
+
+
+
 
 
 

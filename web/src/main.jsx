@@ -1,8 +1,13 @@
-﻿import React, { useEffect } from "react";
+import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { WagmiProvider } from "wagmi";
 import { sdk } from "@farcaster/miniapp-sdk";
 import App from "./App";
+import { wagmiConfig } from "./wagmi";
 import "./index.css";
+
+const queryClient = new QueryClient();
 
 function Root() {
   useEffect(() => {
@@ -40,6 +45,10 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <Root />
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
+        <Root />
+      </QueryClientProvider>
+    </WagmiProvider>
   </React.StrictMode>
 );

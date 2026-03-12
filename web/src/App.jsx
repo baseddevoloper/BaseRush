@@ -20,6 +20,8 @@ import { Textarea } from "./components/ui/textarea";
 import { Badge } from "./components/ui/badge";
 import { Separator } from "./components/ui/separator";
 import { sdk } from "@farcaster/miniapp-sdk";
+import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
+import { useAccount, useConnect } from "wagmi";
 
 const LS_KEYS = {
   activeToken: "arena_active_token",
@@ -519,6 +521,8 @@ function ProfileHero({ handle, wallet, premium, followers, following, copiers })
 export default function App() {
   const [userId, setUserId] = useState("");
   const [connected, setConnected] = useState(false);
+  const { address: wagmiAddress, isConnected: wagmiConnected } = useAccount();
+  const { connectAsync } = useConnect();
   const [activeTab, setActiveTab] = useState("home");
 
   const [activeToken, setActiveToken] = useState(() => readLocal(LS_KEYS.activeToken, "ETH"));
@@ -808,7 +812,7 @@ export default function App() {
     setInbox(inboxOut.items || []);
   }
 
-  async function resolveMiniAppIdentity({ interactive = false, requireWallet = false } = {}) {
+  async function resolveMiniAppIdentity() {
     const identity = { fid: null, username: null, address: null };
 
     try {
@@ -823,31 +827,20 @@ export default function App() {
       // continue with best-effort identity
     }
 
-    try {
-      const provider = await withTimeout(() => sdk.wallet.getEthereumProvider(), 2200, "wallet provider");
-      if (!provider?.request) {
-        if (interactive || requireWallet) throw new Error("wallet_provider_unavailable");
-        return identity;
-      }
-
-      let accounts = await withTimeout(() => provider.request({ method: "eth_accounts" }), 2200, "eth_accounts");
-      if ((!Array.isArray(accounts) || !accounts[0]) && interactive) {
-        accounts = await withTimeout(() => provider.request({ method: "eth_requestAccounts" }), 7000, "eth_requestAccounts");
-      }
-
-      if (Array.isArray(accounts) && accounts[0]) {
-        identity.address = String(accounts[0]);
-      } else if (interactive || requireWallet) {
-        throw new Error("wallet_not_connected");
-      }
-    } catch (err) {
-      if (interactive || requireWallet) throw err;
-      // wallet provider may be unavailable on some clients
-    }
-
     return identity;
   }
 
+  async function ensureWalletAddress(identity) {
+    if (wagmiConnected && wagmiAddress) return String(wagmiAddress);
+
+    const inMini = await isMiniAppRuntime();
+    if (!inMini) throw new Error("open_in_farcaster_or_base_app");
+
+    const result = await connectAsync({ connector: farcasterMiniApp(), chainId: 8453 });
+    const connectedAddress = result?.accounts?.[0] || wagmiAddress || identity?.address || "";
+    if (!connectedAddress) throw new Error("wallet_not_connected");
+    return String(connectedAddress);
+  }
   async function loginWithPreferredSession(identity, preferredUserId) {
     const resolvedUserId = preferredUserId?.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
 
@@ -899,7 +892,8 @@ export default function App() {
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
       await requestSessionPromptOnce();
-      const identity = await resolveMiniAppIdentity({ interactive: true, requireWallet: true });
+      const identity = await resolveMiniAppIdentity();
+      identity.address = await ensureWalletAddress(identity);
       const login = await loginWithPreferredSession(identity, userId);
 
       setConnectHint(identity.address ? `Connected wallet: ${identity.address}` : "Connected in mini app");
@@ -923,8 +917,9 @@ export default function App() {
       setLoading(true);
       try {
         await requestSessionPromptOnce();
-      const identity = await resolveMiniAppIdentity({ interactive: true, requireWallet: true });
-        const login = await loginWithPreferredSession(identity, userId);
+      const identity = await resolveMiniAppIdentity();
+      identity.address = await ensureWalletAddress(identity);
+      const login = await loginWithPreferredSession(identity, userId);
 
         if (cancelled) return;
         setUserId(login.session.userId);
@@ -1806,6 +1801,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 
 

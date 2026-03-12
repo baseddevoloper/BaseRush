@@ -895,7 +895,7 @@ export default function App() {
     setLoading(true);
     setConnectHint("Requesting signature permission...");
     try {
-      await requestSessionPromptOnce({ force: true, strict: true });
+      await requestSessionPromptOnce({ force: true, strict: false });
       await getQuickAuthToken({ force: true, strict: true });
       setConnectHint("Signature permission granted");
     } catch (err) {
@@ -914,11 +914,11 @@ export default function App() {
       setIsInMiniAppContext(!!liveInMini);
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
-      await requestSessionPromptOnce({ force: true, strict: true });
+      await requestSessionPromptOnce({ force: true, strict: false });
       const identity = await resolveMiniAppIdentity();
       identity.address = await ensureWalletAddress(identity);
-      const strictQuickToken = await getQuickAuthToken({ force: true, strict: true });
-      const login = await loginWithPreferredSession(identity, userId, strictQuickToken);
+      const quickToken = await getQuickAuthToken({ force: true, strict: false });
+      const login = await loginWithPreferredSession(identity, userId, quickToken);
 
       setConnectHint(identity.address ? `Connected wallet: ${identity.address}` : "Connected in mini app");
       setUserId(login.session.userId);
@@ -940,11 +940,11 @@ export default function App() {
     async function runAutoConnect() {
       setLoading(true);
       try {
-        await requestSessionPromptOnce();
+        await requestSessionPromptOnce({ strict: false });
         const identity = await resolveMiniAppIdentity();
       identity.address = await ensureWalletAddress(identity);
-      const strictQuickToken = await getQuickAuthToken({ force: true, strict: true });
-      const login = await loginWithPreferredSession(identity, userId, strictQuickToken);
+      const quickToken = await getQuickAuthToken({ force: true, strict: false });
+      const login = await loginWithPreferredSession(identity, userId, quickToken);
 
         if (cancelled) return;
         setUserId(login.session.userId);
@@ -1869,6 +1869,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

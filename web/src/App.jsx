@@ -215,11 +215,14 @@ async function isMiniAppRuntime() {
   return typeof window !== "undefined" && !!(window.miniapp?.sdk || window.farcaster);
 }
 
-async function getQuickAuthToken() {
+async function getQuickAuthToken({ force = false, strict = false } = {}) {
   try {
-    const qa = await sdk.quickAuth.getToken();
+    const qa = await sdk.quickAuth.getToken(force ? { force: true } : undefined);
     const token = qa?.token || "";
-    if (!token) return "";
+    if (!token) {
+      if (strict) throw new Error("signature_permission_required");
+      return "";
+    }
     try {
       if (typeof window !== "undefined") window.localStorage.setItem(LS_KEYS.quickAuthToken, token);
     } catch {
@@ -227,6 +230,7 @@ async function getQuickAuthToken() {
     }
     return token;
   } catch {
+    if (strict) throw new Error("signature_permission_required");
     return "";
   }
 }
@@ -841,10 +845,10 @@ export default function App() {
     if (!connectedAddress) throw new Error("wallet_not_connected");
     return String(connectedAddress);
   }
-  async function loginWithPreferredSession(identity, preferredUserId) {
+  async function loginWithPreferredSession(identity, preferredUserId, providedQuickToken = "") {
     const resolvedUserId = preferredUserId?.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
 
-    const quickToken = await getQuickAuthToken();
+    const quickToken = providedQuickToken || await getQuickAuthToken();
     if (quickToken) {
       try {
         return await apiPost(
@@ -871,17 +875,36 @@ export default function App() {
       address: identity.address
     });
   }
-  async function requestSessionPromptOnce() {
+
+  async function requestSessionPromptOnce({ force = false, strict = false } = {}) {
+    if (force) sessionPromptedRef.current = false;
     if (sessionPromptedRef.current) return;
     sessionPromptedRef.current = true;
     try {
       const nonce = `baserush_${Date.now()}`;
       await withTimeout(() => sdk.actions.signIn({ nonce }), 8000, "actions.signIn");
     } catch (err) {
+      sessionPromptedRef.current = false;
+      if (strict) throw new Error("signature_permission_required");
       const reason = String(err?.message || "session_prompt_skipped");
       setConnectHint(`Session prompt: ${reason}`);
     }
   }
+
+  async function handleGrantSignature() {
+    setLoading(true);
+    setConnectHint("Requesting signature permission...");
+    try {
+      await requestSessionPromptOnce({ force: true, strict: true });
+      await getQuickAuthToken({ force: true, strict: true });
+      setConnectHint("Signature permission granted");
+    } catch (err) {
+      setConnectHint(`Signature failed: ${err?.message || "signature_permission_required"}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleConnect() {
     setLoading(true);
     setConnectHint("Requesting session and wallet approval...");
@@ -891,10 +914,11 @@ export default function App() {
       setIsInMiniAppContext(!!liveInMini);
       if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
-      await requestSessionPromptOnce();
+      await requestSessionPromptOnce({ force: true, strict: true });
       const identity = await resolveMiniAppIdentity();
       identity.address = await ensureWalletAddress(identity);
-      const login = await loginWithPreferredSession(identity, userId);
+      const strictQuickToken = await getQuickAuthToken({ force: true, strict: true });
+      const login = await loginWithPreferredSession(identity, userId, strictQuickToken);
 
       setConnectHint(identity.address ? `Connected wallet: ${identity.address}` : "Connected in mini app");
       setUserId(login.session.userId);
@@ -917,9 +941,10 @@ export default function App() {
       setLoading(true);
       try {
         await requestSessionPromptOnce();
-      const identity = await resolveMiniAppIdentity();
+        const identity = await resolveMiniAppIdentity();
       identity.address = await ensureWalletAddress(identity);
-      const login = await loginWithPreferredSession(identity, userId);
+      const strictQuickToken = await getQuickAuthToken({ force: true, strict: true });
+      const login = await loginWithPreferredSession(identity, userId, strictQuickToken);
 
         if (cancelled) return;
         setUserId(login.session.userId);
@@ -1277,9 +1302,7 @@ export default function App() {
               <Button variant="outline" onClick={() => refreshSummary()} disabled={!connected || loading}>
                 <RefreshCw className="mr-2 h-4 w-4" /> Refresh
               </Button>
-              <Button variant="ghost" disabled className="justify-start text-xs text-muted-foreground">
-                {isInMiniAppContext ? "Mini App: Live" : "Mini App: Browser"}
-              </Button>
+              <Button variant="outline" onClick={handleGrantSignature} disabled={loading}>Grant Signature</Button>
             </div>
           </div>
 
@@ -1288,7 +1311,8 @@ export default function App() {
               <p className="text-xs text-muted-foreground">{connectHint
                 .replace("open_in_farcaster_or_base_app", "Open this mini app inside Farcaster/Base app")
                 .replace("wallet_provider_unavailable", "Wallet provider is not available in this client")
-                .replace("wallet_not_connected", "Wallet connection was not approved")}</p>
+                .replace("wallet_not_connected", "Wallet connection was not approved")
+                .replace("signature_permission_required", "Signature permission is required")}</p>
             </div>
           )}
         </CardContent>
@@ -1832,6 +1856,9 @@ export default function App() {
     </div>
   );
 }
+
+
+
 
 
 

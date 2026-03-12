@@ -532,6 +532,7 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const { address: wagmiAddress, isConnected: wagmiConnected } = useAccount();
   const { connectAsync } = useConnect();
+  const walletConnected = connected || wagmiConnected || Boolean(wagmiAddress);
   const [activeTab, setActiveTab] = useState("home");
 
   const [activeToken, setActiveToken] = useState(() => readLocal(LS_KEYS.activeToken, "ETH"));
@@ -1324,7 +1325,7 @@ export default function App() {
               <CardDescription>BASERUSH APP</CardDescription>
               <CardTitle className="text-xl">BaseRush</CardTitle>
             </div>
-            <Badge variant={connected ? "success" : "muted"}>{connected ? "Connected" : "Guest"}</Badge>
+            <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -1336,18 +1337,18 @@ export default function App() {
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Wallet Session</p>
                 <p className="text-sm font-medium text-foreground">
-                  {connected
+                  {walletConnected
                     ? wagmiAddress
                       ? `${wagmiAddress.slice(0, 6)}...${wagmiAddress.slice(-4)}`
                       : "Connected"
                     : "Not connected"}
                 </p>
               </div>
-              <span className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-emerald-400" : "bg-zinc-500"}`} />
+              <span className={`h-2.5 w-2.5 rounded-full ${walletConnected ? "bg-emerald-400" : "bg-zinc-500"}`} />
             </div>
 
             <div className="mt-3 rounded-xl border border-white/10 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-              {connected
+              {walletConnected
                 ? "Wallet connected. App unlocked."
                 : loading
                   ? "Auto-connecting wallet and requesting signature..."
@@ -1367,7 +1368,7 @@ export default function App() {
         </CardContent>
       </Card>
 
-      {!connected && (
+      {!walletConnected && (
         <Card className="mb-4 rounded-2xl border-white/10 bg-card/80">
           <CardHeader>
             <CardTitle className="text-base">Connecting Your Wallet</CardTitle>
@@ -1385,7 +1386,7 @@ export default function App() {
         </Card>
       )}
 
-      {connected && activeTab === "home" && (
+      {walletConnected && activeTab === "home" && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Card className="rounded-2xl border-white/10">
@@ -1405,7 +1406,7 @@ export default function App() {
               </CardHeader>
               <CardContent className="space-y-2">
                 <Input type="number" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} />
-                <Button className="w-full" variant="outline" onClick={handleDeposit} disabled={!connected || loading}>Deposit</Button>
+                <Button className="w-full" variant="outline" onClick={handleDeposit} disabled={!walletConnected || loading}>Deposit</Button>
               </CardContent>
             </Card>
           </div>
@@ -1599,7 +1600,7 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-2">
                 <Input type="number" value={buyAmount} onChange={(e) => setBuyAmount(e.target.value)} />
-                <Button onClick={handleBuyAndNote} disabled={!connected || loading}>Buy</Button>
+                <Button onClick={handleBuyAndNote} disabled={!walletConnected || loading}>Buy</Button>
               </div>
               <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Write note and buy" />
 
@@ -1607,21 +1608,21 @@ export default function App() {
 
               <div className="grid grid-cols-4 gap-2">
                 {[10, 25, 50, 100].map((pct) => (
-                  <Button key={pct} variant="ghost" onClick={() => handleSellByPct(pct)} disabled={!connected || !currentPosition || loading}>
+                  <Button key={pct} variant="ghost" onClick={() => handleSellByPct(pct)} disabled={!walletConnected || !currentPosition || loading}>
                     %{pct}
                   </Button>
                 ))}
               </div>
               <div className="grid grid-cols-[1fr_auto] gap-2">
                 <Input type="number" min="1" max="100" step="1" value={customSell} onChange={(e) => setCustomSell(e.target.value)} placeholder="Custom %" />
-                <Button variant="outline" onClick={handleSellCustomPercent} disabled={!connected || loading}>Sell %</Button>
+                <Button variant="outline" onClick={handleSellCustomPercent} disabled={!walletConnected || loading}>Sell %</Button>
               </div>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {connected && activeTab === "friends" && (
+      {walletConnected && activeTab === "friends" && (
         <Card className="rounded-2xl border-white/10">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2"><Users className="h-4 w-4" /> Friends</CardTitle>
@@ -1640,7 +1641,7 @@ export default function App() {
         </Card>
       )}
 
-      {connected && activeTab === "feed" && (
+      {walletConnected && activeTab === "feed" && (
         <Card className="rounded-2xl border-white/10">
           <CardHeader>
             <CardTitle className="text-base">Feed</CardTitle>
@@ -1654,7 +1655,7 @@ export default function App() {
         </Card>
       )}
 
-      {connected && activeTab === "referrals" && (
+      {walletConnected && activeTab === "referrals" && (
         <Card className="rounded-2xl border-white/10">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2"><Gift className="h-4 w-4" /> Referrals</CardTitle>
@@ -1682,7 +1683,7 @@ export default function App() {
         </Card>
       )}
 
-      {connected && activeTab === "profile" && (
+      {walletConnected && activeTab === "profile" && (
         <div className="space-y-3">
           <ProfileHero
             handle={profileHandle}
@@ -1787,7 +1788,7 @@ export default function App() {
                   <p>{onchainConfig?.signerConfigured ? "Configured" : "Missing"}</p>
                 </div>
               </div>
-              <Button variant="outline" className="w-full" onClick={handleOnchainSmoke} disabled={!connected || loading}>
+              <Button variant="outline" className="w-full" onClick={handleOnchainSmoke} disabled={!walletConnected || loading}>
                 Run Onchain Smoke
               </Button>
               {smokeStatus?.ok && (
@@ -1835,10 +1836,10 @@ export default function App() {
                 <span className="text-sm text-muted-foreground">Premium</span>
                 <Badge variant={premium.active ? "success" : "muted"}>{premium.active ? "Active" : "Locked"}</Badge>
               </div>
-              <Button className="w-full" onClick={handlePremium} disabled={!connected || premium.active || loading}>
+              <Button className="w-full" onClick={handlePremium} disabled={!walletConnected || premium.active || loading}>
                 <Crown className="mr-2 h-4 w-4" /> Activate Premium ($20)
               </Button>
-              <Button variant="outline" className="w-full" onClick={handleCopyTradeTest} disabled={!connected || !premium.active || loading}>
+              <Button variant="outline" className="w-full" onClick={handleCopyTradeTest} disabled={!walletConnected || !premium.active || loading}>
                 Run Copy Trade (Premium)
               </Button>
               <Separator />
@@ -1891,7 +1892,7 @@ export default function App() {
                     />
                   </div>
                 </div>
-                <Button variant="outline" className="w-full" onClick={handleSaveCopySettings} disabled={!connected || loading}>
+                <Button variant="outline" className="w-full" onClick={handleSaveCopySettings} disabled={!walletConnected || loading}>
                   Save Copy Settings
                 </Button>
               </div>
@@ -1923,6 +1924,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

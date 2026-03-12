@@ -913,9 +913,9 @@ export default function App() {
     });
   }
 
-  async function loginWithFarcasterAuth(identity, preferredUserId) {
+  async function loginWithFarcasterAuth(identity, preferredUserId, opts = {}) {
     const resolvedUserId = preferredUserId?.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
-    const token = await getQuickAuthToken({ force: true, strict: true });
+    const token = await getQuickAuthToken({ force: !!opts.force, strict: !!opts.strict });
     const out = await apiPost(
       "/api/auth/login",
       {
@@ -935,7 +935,7 @@ export default function App() {
     if (authVerified && !force) return true;
     const identity = await resolveMiniAppIdentity();
     identity.address = wagmiAddress || identity.address;
-    const out = await loginWithFarcasterAuth(identity, userId);
+    const out = await loginWithFarcasterAuth(identity, userId, { force, strict: force });
     setUserId(out.session.userId);
     setAuthVerified(!!out.session.authVerified);
     return !!out.session.authVerified;
@@ -990,7 +990,7 @@ export default function App() {
       try {
         const identity = await resolveMiniAppIdentity();
         identity.address = await ensureWalletAddress(identity);
-        const quickToken = await getQuickAuthToken({ force: true, strict: false });
+        const quickToken = await getQuickAuthToken({ force: false, strict: false });
         const login = await loginWithPreferredSession(identity, userId, quickToken);
 
         if (cancelled) return;
@@ -1016,6 +1016,24 @@ export default function App() {
       cancelled = true;
     };
   }, [isInMiniAppContext, connected, loading, autoConnectTried, userId]);
+  useEffect(() => {
+    if (!walletConnected || authVerified) return;
+
+    let cancelled = false;
+    async function tryRestoreAuth() {
+      try {
+        await ensureFarcasterAuth({ force: false });
+        if (!cancelled) setConnectHint("Farcaster auth restored from session.");
+      } catch {
+        // no popup in passive restore path
+      }
+    }
+
+    tryRestoreAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [walletConnected, authVerified, userId]);
 
   async function applyContractToken() {
     const normalized = contractInput.trim();
@@ -1944,6 +1962,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 
 

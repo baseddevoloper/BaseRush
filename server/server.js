@@ -187,7 +187,10 @@ function buildFarcasterManifestFromEnv() {
     ogImageUrl,
     noindex: FC_NOINDEX,
     primaryCategory: normalizeCategory(FC_PRIMARY_CATEGORY),
-    tags: normalizeTags(FC_TAGS)
+    tags: normalizeTags(FC_TAGS),
+    canonicalDomain: (new URL(homeUrl)).hostname,
+    requiredChains: ["eip155:8453"],
+    requiredCapabilities: ["actions.ready"]
   };
 
   return {

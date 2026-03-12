@@ -34,7 +34,14 @@
                                "socialfi",
                                "copytrade",
                                "defi"
-                           ]
+                           ],
+                  "canonicalDomain":  "baserush.app",
+                  "requiredChains":  [
+                                         "eip155:8453"
+                                     ],
+                  "requiredCapabilities":  [
+                                               "actions.ready"
+                                           ]
               },
     "miniapp":  {
                     "version":  "1",
@@ -66,6 +73,13 @@
                                  "socialfi",
                                  "copytrade",
                                  "defi"
-                             ]
+                             ],
+                    "canonicalDomain":  "baserush.app",
+                    "requiredChains":  [
+                                           "eip155:8453"
+                                       ],
+                    "requiredCapabilities":  [
+                                                 "actions.ready"
+                                             ]
                 }
 }

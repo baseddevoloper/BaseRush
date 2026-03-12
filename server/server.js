@@ -635,6 +635,79 @@ function findTokenByContractOrSymbol(input) {
   return Object.values(TOKEN_REGISTRY).find((t) => t.symbol === upper) || null;
 }
 
+function humanizeAge(isoAt) {
+  const at = new Date(String(isoAt || ""));
+  if (Number.isNaN(at.getTime())) return "now";
+  const sec = Math.max(0, Math.floor((Date.now() - at.getTime()) / 1000));
+  if (sec < 60) return sec + "s";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + "m";
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return hr + "h";
+  const day = Math.floor(hr / 24);
+  return day + "d";
+}
+
+function toFeedRow(user, trade) {
+  const rawHandle = user.auth?.username ? "@" + user.auth.username : "@" + user.userId;
+  const side = String(trade?.side || "").toUpperCase();
+  const token = String(trade?.token || "").toUpperCase();
+  const amount = Number(trade?.grossUsdc || 0);
+  const text = side && token ? side.toLowerCase() + " " + token : "trade";
+
+  return {
+    id: String(trade?.id || ("f_" + Date.now() + "_" + randomHex(4))),
+    userId: user.userId,
+    handle: rawHandle,
+    text,
+    amount,
+    ts: humanizeAge(trade?.at),
+    pnl: Number(trade?.realizedPnl || 0),
+    side,
+    token,
+    executionMode: trade?.executionMode || null,
+    txStatus: trade?.txStatus || null,
+    at: trade?.at || null
+  };
+}
+
+function buildSocialFeed({ viewerUserId = "", scope = "global", limit = 40 }) {
+  const normalizedScope = String(scope || "global").toLowerCase() === "following" ? "following" : "global";
+  const max = Math.max(1, Math.min(100, Number(limit || 40)));
+
+  const rows = [];
+  db.users.forEach((user) => {
+    (user.trades || []).forEach((trade) => {
+      rows.push(toFeedRow(user, trade));
+    });
+  });
+
+  rows.sort((a, b) => {
+    const ta = new Date(a.at || 0).getTime();
+    const tb = new Date(b.at || 0).getTime();
+    return tb - ta;
+  });
+
+  let filtered = rows;
+  let following = [];
+  if (normalizedScope === "following") {
+    const set = db.follows.get(String(viewerUserId || "")) || new Set();
+    following = [...set];
+    if (set.size > 0) {
+      filtered = rows.filter((r) => set.has(r.userId));
+    } else {
+      filtered = [];
+    }
+  }
+
+  return {
+    scope: normalizedScope,
+    items: filtered.slice(0, max),
+    following,
+    total: filtered.length
+  };
+}
+
 function resolveTradeInputs(user, { token, side = "BUY", amountUsdc, tokenAmount, sellPercent }) {
   const normalizedToken = String(token || "").toUpperCase();
   const price = tokenPrices[normalizedToken];
@@ -1991,6 +2064,20 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { ok: true, following: [...set] });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/feed") {
+    const userId = String(url.searchParams.get("userId") || "guest");
+    const scope = String(url.searchParams.get("scope") || "global");
+    const limit = Number(url.searchParams.get("limit") || 40);
+    const feed = buildSocialFeed({ viewerUserId: userId, scope, limit });
+    return json(res, 200, { ok: true, ...feed });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/feed/following") {
+    const userId = String(url.searchParams.get("userId") || "guest");
+    const limit = Number(url.searchParams.get("limit") || 40);
+    const feed = buildSocialFeed({ viewerUserId: userId, scope: "following", limit });
+    return json(res, 200, { ok: true, ...feed });
+  }
   if (req.method === "GET" && url.pathname === "/api/notifications/inbox") {
     const userId = url.searchParams.get("userId") || "guest";
     return json(res, 200, { ok: true, items: db.notifications.get(userId) || [] });

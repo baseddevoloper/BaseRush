@@ -580,6 +580,7 @@ export default function App() {
   const [premium, setPremium] = useState({ active: false, expiresAt: null });
   const [inbox, setInbox] = useState([]);
   const [feed, setFeed] = useState(INITIAL_FEED);
+  const [feedScope, setFeedScope] = useState("global");
   const [onchainConfig, setOnchainConfig] = useState(null);
   const [smokeStatus, setSmokeStatus] = useState(null);
   const [isInMiniAppContext, setIsInMiniAppContext] = useState(false);
@@ -728,6 +729,24 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!walletConnected || !userId || activeTab !== "feed") return;
+    let cancelled = false;
+    let timer = null;
+
+    const tick = async () => {
+      if (cancelled) return;
+      await refreshFeed(userId, feedScope);
+      if (!cancelled) timer = setTimeout(tick, 5000);
+    };
+
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [walletConnected, userId, activeTab, feedScope]);
 
   useEffect(() => {
     function onEnabled({ notificationDetails }) {
@@ -897,6 +916,18 @@ export default function App() {
     };
   }, [lastTxLifecycle?.operationId, lastTxLifecycle?.status, lastTx?.status, lastTx?.txHash, userId]);
 
+  async function refreshFeed(nextUserId = userId, nextScope = feedScope) {
+    if (!nextUserId) return;
+    try {
+      const out = await apiGet(
+        `/api/feed?userId=${encodeURIComponent(nextUserId)}&scope=${encodeURIComponent(nextScope)}&limit=40`
+      );
+      if (Array.isArray(out.items)) setFeed(out.items);
+    } catch {
+      // keep previous feed on transient errors
+    }
+  }
+
   async function refreshSummary(nextUserId = userId) {
     if (!nextUserId) return;
     const [summary, premiumStatus, inboxOut] = await Promise.all([
@@ -909,6 +940,7 @@ export default function App() {
     setPositions(summary.positions || {});
     setPremium(premiumStatus.premium || { active: false, expiresAt: null });
     setInbox(inboxOut.items || []);
+    void refreshFeed(nextUserId, feedScope);
   }
 
   async function resolveMiniAppIdentity() {
@@ -1828,13 +1860,27 @@ export default function App() {
       {walletConnected && activeTab === "feed" && (
         <Card className="rounded-2xl border-white/10">
           <CardHeader>
-            <CardTitle className="text-base">Feed</CardTitle>
-            <CardDescription>Live social trade stream</CardDescription>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base">Feed</CardTitle>
+                <CardDescription>Live social trade stream</CardDescription>
+              </div>
+              <div className="flex gap-1">
+                <Button size="sm" variant={feedScope === "global" ? "default" : "outline"} onClick={() => setFeedScope("global")}>Global</Button>
+                <Button size="sm" variant={feedScope === "following" ? "default" : "outline"} onClick={() => setFeedScope("following")}>Following</Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {feed.map((item) => (
-              <FeedTradeCard key={item.id} item={item} />
-            ))}
+            {feed.length > 0 ? (
+              feed.map((item) => (
+                <FeedTradeCard key={item.id} item={item} />
+              ))
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-muted/20 p-3 text-sm text-muted-foreground">
+                {feedScope === "following" ? "No trades from followed traders yet." : "No trades yet. First trade will appear here."}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

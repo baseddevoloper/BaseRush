@@ -112,6 +112,7 @@ const ALLOW_LOCAL_SIGNER_IN_PROD = String(process.env.ALLOW_LOCAL_SIGNER_IN_PROD
 const FC_AUTH_REQUIRED = process.env.NODE_ENV === "test" ? false : String(process.env.FC_AUTH_REQUIRED || "true") === "true";
 const FC_QUICK_AUTH_ORIGIN = process.env.FC_QUICK_AUTH_ORIGIN || "https://auth.farcaster.xyz";
 const FC_AUTH_ALLOWED_DOMAINS = process.env.FC_AUTH_ALLOWED_DOMAINS || "";
+const FC_AUTH_DEBUG = process.env.NODE_ENV === "production" ? String(process.env.FC_AUTH_DEBUG || "false") === "true" : true;
 const quickAuthClient = createQuickAuthClient({ origin: FC_QUICK_AUTH_ORIGIN });
 
 function normalizePlainText(value, maxLen) {
@@ -925,18 +926,21 @@ function getBearerToken(req) {
 
 async function verifyQuickAuthToken(token) {
   let lastError = null;
+  const attempts = [];
   for (const domain of AUTH_DOMAIN_CANDIDATES) {
     try {
       const payload = await quickAuthClient.verifyJwt({ token, domain });
       return { payload, domain };
     } catch (err) {
       lastError = err;
+      attempts.push({ domain, reason: String(err?.message || "verify_failed") });
     }
   }
 
   const err = new Error("invalid_quick_auth_token");
   err.status = 401;
   err.cause = lastError;
+  err.details = attempts;
   throw err;
 }
 
@@ -984,6 +988,17 @@ function enforceUserQuickAuthBinding(userId, authResult) {
 
   return user;
 }
+
+function getAuthDebugSnapshot() {
+  return {
+    authRequired: FC_AUTH_REQUIRED,
+    quickAuthOrigin: FC_QUICK_AUTH_ORIGIN,
+    domainCandidates: AUTH_DOMAIN_CANDIDATES,
+    appBaseUrl: APP_BASE_URL || null,
+    fcHomeUrl: process.env.FC_HOME_URL || null
+  };
+}
+
 async function serveStatic(file, res) {
   try {
     const buf = await readFile(path.join(root, file));
@@ -1043,7 +1058,14 @@ const server = createServer(async (req, res) => {
       try {
         authResult = await requireQuickAuth(req);
       } catch (err) {
-        return json(res, httpStatusFromError(err), { ok: false, error: err.message || "auth_required" });
+        const out = { ok: false, error: err.message || "auth_required" };
+        if (FC_AUTH_DEBUG) {
+          out.debug = {
+            ...getAuthDebugSnapshot(),
+            verifyAttempts: Array.isArray(err?.details) ? err.details : []
+          };
+        }
+        return json(res, httpStatusFromError(err), out);
       }
     }
 
@@ -1513,6 +1535,13 @@ const server = createServer(async (req, res) => {
     });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/auth/diagnostics") {
+    return json(res, 200, {
+      ok: true,
+      diagnostics: getAuthDebugSnapshot()
+    });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/onchain/config") {
     return json(res, 200, {
       ok: true,
@@ -1593,12 +1622,4 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 export { server, db, getOrCreateUser };
-
-
-
-
-
-
-
-
 

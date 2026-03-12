@@ -88,6 +88,58 @@ const FC_FRAME_VERSION = process.env.FC_FRAME_VERSION || "1";
 const FC_FRAME_NAME = process.env.FC_FRAME_NAME || "BaseRush";
 const FC_BUTTON_TITLE = process.env.FC_BUTTON_TITLE || "Open BaseRush";
 const FC_SPLASH_BG = process.env.FC_SPLASH_BG || "#0B0F14";
+const FC_SUBTITLE = process.env.FC_SUBTITLE || "Trade feed on Base";
+const FC_DESCRIPTION = process.env.FC_DESCRIPTION || "Track traders, see live activity, and execute USDC trades on Base with social insights.";
+const FC_TAGLINE = process.env.FC_TAGLINE || "Trade social on Base";
+const FC_OG_TITLE = process.env.FC_OG_TITLE || "BaseRush";
+const FC_OG_DESCRIPTION = process.env.FC_OG_DESCRIPTION || "Social trading feed and copy tools on Base.";
+const FC_NOINDEX = String(process.env.FC_NOINDEX || "false").toLowerCase() === "true";
+const FC_PRIMARY_CATEGORY = process.env.FC_PRIMARY_CATEGORY || "finance";
+const FC_TAGS = process.env.FC_TAGS || "base,trading,socialfi,copytrade,defi";
+
+function normalizePlainText(value, maxLen) {
+  const safe = String(value || "")
+    .replace(/[^A-Za-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return safe.slice(0, maxLen);
+}
+
+function normalizeCategory(value) {
+  const allowed = new Set([
+    "games",
+    "social",
+    "finance",
+    "utility",
+    "productivity",
+    "health-fitness",
+    "news-media",
+    "music",
+    "shopping",
+    "education",
+    "developer-tools",
+    "entertainment",
+    "art-creativity"
+  ]);
+  const v = String(value || "").toLowerCase().trim();
+  return allowed.has(v) ? v : "finance";
+}
+
+function normalizeTags(value) {
+  const items = String(value || "")
+    .split(",")
+    .map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20))
+    .filter(Boolean);
+  return Array.from(new Set(items)).slice(0, 5);
+}
+
+function normalizeUrls(value, limit = 3) {
+  return String(value || "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
 
 function trimSlash(url) {
   return String(url || "").replace(/\/$/, "");
@@ -105,8 +157,38 @@ function buildFarcasterManifestFromEnv() {
   const root = trimSlash(homeUrl);
   const iconUrl = process.env.FC_ICON_URL || (root + "/icon.png");
   const imageUrl = process.env.FC_IMAGE_URL || (root + "/og.png");
+  const heroImageUrl = process.env.FC_HERO_IMAGE_URL || imageUrl;
+  const ogImageUrl = process.env.FC_OG_IMAGE_URL || imageUrl;
   const splashImageUrl = process.env.FC_SPLASH_IMAGE_URL || (root + "/splash.png");
   const webhookUrl = process.env.FC_WEBHOOK_URL || (root + "/api/farcaster/webhook");
+  const screenshotUrls = normalizeUrls(
+    process.env.FC_SCREENSHOT_URLS ||
+      `${root}/screenshots/home.png,${root}/screenshots/feed.png,${root}/screenshots/profile.png`,
+    3
+  );
+
+  const frameMeta = {
+    version: FC_FRAME_VERSION,
+    name: normalizePlainText(FC_FRAME_NAME, 30) || "BaseRush",
+    homeUrl,
+    iconUrl,
+    imageUrl,
+    buttonTitle: normalizePlainText(FC_BUTTON_TITLE, 30) || "Open BaseRush",
+    splashImageUrl,
+    splashBackgroundColor: FC_SPLASH_BG,
+    webhookUrl,
+    subtitle: normalizePlainText(FC_SUBTITLE, 30),
+    description: normalizePlainText(FC_DESCRIPTION, 170),
+    screenshotUrls,
+    heroImageUrl,
+    tagline: normalizePlainText(FC_TAGLINE, 30),
+    ogTitle: normalizePlainText(FC_OG_TITLE, 30),
+    ogDescription: normalizePlainText(FC_OG_DESCRIPTION, 100),
+    ogImageUrl,
+    noindex: FC_NOINDEX,
+    primaryCategory: normalizeCategory(FC_PRIMARY_CATEGORY),
+    tags: normalizeTags(FC_TAGS)
+  };
 
   return {
     accountAssociation: {
@@ -114,17 +196,8 @@ function buildFarcasterManifestFromEnv() {
       payload: hasAssociation ? payload : "REPLACE_WITH_PAYLOAD",
       signature: hasAssociation ? signature : "REPLACE_WITH_SIGNATURE"
     },
-    frame: {
-      version: FC_FRAME_VERSION,
-      name: FC_FRAME_NAME,
-      homeUrl,
-      iconUrl,
-      imageUrl,
-      buttonTitle: FC_BUTTON_TITLE,
-      splashImageUrl,
-      splashBackgroundColor: FC_SPLASH_BG,
-      webhookUrl
-    }
+    frame: frameMeta,
+    miniapp: frameMeta
   };
 }
 
@@ -1202,6 +1275,9 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 export { server, db, getOrCreateUser };
+
+
+
 
 
 

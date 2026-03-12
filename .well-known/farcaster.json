@@ -13,6 +13,59 @@
                   "buttonTitle":  "Open BaseRush",
                   "splashImageUrl":  "https://baserush.app/splash.png",
                   "splashBackgroundColor":  "#0B0F14",
-                  "webhookUrl":  "https://baserush.app/api/farcaster/webhook"
-              }
+                  "webhookUrl":  "https://baserush.app/api/farcaster/webhook",
+                  "subtitle":  "Trade feed on Base",
+                  "description":  "Track traders, see live activity, and execute USDC trades on Base with social insights",
+                  "screenshotUrls":  [
+                                         "https://baserush.app/screenshots/home.png",
+                                         "https://baserush.app/screenshots/feed.png",
+                                         "https://baserush.app/screenshots/profile.png"
+                                     ],
+                  "heroImageUrl":  "https://baserush.app/hero.png",
+                  "tagline":  "Trade social on Base",
+                  "ogTitle":  "BaseRush",
+                  "ogDescription":  "Social trading feed and copy tools on Base",
+                  "ogImageUrl":  "https://baserush.app/og.png",
+                  "noindex":  false,
+                  "primaryCategory":  "finance",
+                  "tags":  [
+                               "base",
+                               "trading",
+                               "socialfi",
+                               "copytrade",
+                               "defi"
+                           ]
+              },
+    "miniapp":  {
+                    "version":  "1",
+                    "name":  "BaseRush",
+                    "homeUrl":  "https://baserush.app",
+                    "iconUrl":  "https://baserush.app/icon.png",
+                    "imageUrl":  "https://baserush.app/og.png",
+                    "buttonTitle":  "Open BaseRush",
+                    "splashImageUrl":  "https://baserush.app/splash.png",
+                    "splashBackgroundColor":  "#0B0F14",
+                    "webhookUrl":  "https://baserush.app/api/farcaster/webhook",
+                    "subtitle":  "Trade feed on Base",
+                    "description":  "Track traders, see live activity, and execute USDC trades on Base with social insights",
+                    "screenshotUrls":  [
+                                           "https://baserush.app/screenshots/home.png",
+                                           "https://baserush.app/screenshots/feed.png",
+                                           "https://baserush.app/screenshots/profile.png"
+                                       ],
+                    "heroImageUrl":  "https://baserush.app/hero.png",
+                    "tagline":  "Trade social on Base",
+                    "ogTitle":  "BaseRush",
+                    "ogDescription":  "Social trading feed and copy tools on Base",
+                    "ogImageUrl":  "https://baserush.app/og.png",
+                    "noindex":  false,
+                    "primaryCategory":  "finance",
+                    "tags":  [
+                                 "base",
+                                 "trading",
+                                 "socialfi",
+                                 "copytrade",
+                                 "defi"
+                             ]
+                }
 }

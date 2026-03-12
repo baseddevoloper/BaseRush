@@ -86,10 +86,17 @@ async function run() {
     assert.equal(onchain.res.status, 200);
     assert.equal(onchain.body.trade.executionMode, "ONCHAIN_MOCK");
     assert.equal(typeof onchain.body.tx.txHash, "string");
+    assert.equal(onchain.body.txLifecycle.status, "confirmed");
+    assert.equal(typeof onchain.body.txLifecycle.operationId, "string");
 
     const txLookup = await get("/api/onchain/tx?txHash=" + encodeURIComponent(onchain.body.tx.txHash));
     assert.equal(txLookup.res.status, 200);
     assert.equal(txLookup.body.tx.txHash, onchain.body.tx.txHash);
+    assert.equal(txLookup.body.operation.operationId, onchain.body.txLifecycle.operationId);
+
+    const opLookup = await get("/api/onchain/operation?operationId=" + encodeURIComponent(onchain.body.txLifecycle.operationId));
+    assert.equal(opLookup.res.status, 200);
+    assert.equal(opLookup.body.operation.status, "confirmed");
 
     const onchainConfig = await get("/api/onchain/config");
     assert.equal(onchainConfig.res.status, 200);
@@ -139,6 +146,8 @@ async function run() {
     assert.equal(copyOnchain.res.status, 200);
     assert.equal(copyOnchain.body.trade.executionMode, "ONCHAIN_MOCK");
     assert.equal(copyOnchain.body.trade.copyFrom, "basewhale");
+    assert.equal(copyOnchain.body.txLifecycle.status, "confirmed");
+    assert.equal(copyOnchain.body.txLifecycle.kind, "copytrade");
 
     const insuff = await post("/api/premium/activate", { userId: "u2", idempotencyKey: "idem_2" });
     assert.equal(insuff.res.status, 402);

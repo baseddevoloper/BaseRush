@@ -330,7 +330,6 @@ function money(n) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n || 0);
 }
 
-function tokenFromText(text) {
 function formatAuthExpiry(exp) {
   const v = Number(exp || 0);
   if (!v) return "-";
@@ -338,8 +337,25 @@ function formatAuthExpiry(exp) {
   if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleString();
 }
+
+function tokenFromText(text) {
   const match = String(text || "").toUpperCase().match(/\b[A-Z]{2,10}\b/);
   return match ? match[0] : "NOTE";
+}
+
+function txStatusClass(status) {
+  const v = String(status || "").toLowerCase();
+  if (v === "confirmed") return "text-emerald-300";
+  if (v === "failed") return "text-rose-300";
+  if (v === "submitted") return "text-amber-300";
+  if (v === "requested") return "text-sky-300";
+  if (v === "simulated") return "text-indigo-300";
+  return "text-zinc-300";
+}
+
+function txStatusLabel(status) {
+  const v = String(status || "").toLowerCase();
+  return v || "unknown";
 }
 
 function FeedTradeCard({ item }) {
@@ -558,6 +574,7 @@ export default function App() {
   const [tokenHolders, setTokenHolders] = useState(TOKEN_DIRECTORY[0].holders || []);
   const [quote, setQuote] = useState(null);
   const [lastTx, setLastTx] = useState(null);
+  const [lastTxLifecycle, setLastTxLifecycle] = useState(null);
   const [wallet, setWallet] = useState({ usdc: 0, feesPaid: 0, realizedPnl: 0, unrealizedPnl: 0, totalPnl: 0 });
   const [positions, setPositions] = useState({});
   const [premium, setPremium] = useState({ active: false, expiresAt: null });
@@ -1137,6 +1154,7 @@ export default function App() {
       });
 
       setLastTx(out.tx || null);
+      setLastTxLifecycle(out.txLifecycle || null);
 
       setFeed((prev) => [{ id: `f_${Date.now()}`, handle: "@you", text: `bought ${activeToken}`, amount: Number(buyAmount || 0), ts: "now", pnl: 0 }, ...prev].slice(0, 60));
 
@@ -1177,6 +1195,7 @@ export default function App() {
 
       setCustomSell("");
       setLastTx(out.tx || null);
+      setLastTxLifecycle(out.txLifecycle || null);
       await refreshSummary();
     } catch (err) {
       alert(`Sell failed: ${err.message}`);
@@ -1207,6 +1226,7 @@ export default function App() {
         pnl: out.trade?.realizedPnl || 0
       }, ...prev].slice(0, 60));
       setLastTx(out.tx || null);
+      setLastTxLifecycle(out.txLifecycle || null);
       await refreshSummary();
     } catch (err) {
       alert(`Sell failed: ${err.message}`);
@@ -1239,6 +1259,7 @@ export default function App() {
         onchain: { slippageBps: Number(copySettings?.slippageBps || 100) }
       });
       setLastTx(out.tx || null);
+      setLastTxLifecycle(out.txLifecycle || null);
       await refreshSummary();
     } catch (err) {
       alert(`Copy trade failed: ${err.message}`);
@@ -1260,7 +1281,10 @@ export default function App() {
         amountUsdc: Number(buyAmount || 1)
       });
       setSmokeStatus({ ok: true, mode: out.mode, tx: out.tx });
-      if (out.tx) setLastTx(out.tx);
+      if (out.tx) {
+        setLastTx(out.tx);
+        setLastTxLifecycle(out.txLifecycle || null);
+      }
     } catch (err) {
       setSmokeStatus({ ok: false, error: err.message });
     } finally {
@@ -1668,9 +1692,30 @@ export default function App() {
                   </div>
                 )}
                 {lastTx && (
-                  <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Last onchain tx</span><span className="font-medium text-emerald-300">confirmed</span></div>
-                    <a className="mt-1 block truncate text-emerald-300 underline" href={lastTx.explorerUrl} target="_blank" rel="noreferrer">{lastTx.txHash}</a>
+                  <div className="mt-2 rounded-lg border border-white/15 bg-black/30 p-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Last onchain tx</span>
+                      <span className={`font-medium ${txStatusClass(lastTxLifecycle?.status || lastTx.status)}`}>
+                        {txStatusLabel(lastTxLifecycle?.status || lastTx.status)}
+                      </span>
+                    </div>
+                    {lastTxLifecycle?.operationId && (
+                      <p className="mt-1 truncate text-[11px] text-muted-foreground">Op: {lastTxLifecycle.operationId}</p>
+                    )}
+                    {lastTx.explorerUrl ? (
+                      <a className="mt-1 block truncate text-emerald-300 underline" href={lastTx.explorerUrl} target="_blank" rel="noreferrer">{lastTx.txHash}</a>
+                    ) : (
+                      <p className="mt-1 truncate text-muted-foreground">{lastTx.txHash}</p>
+                    )}
+                    {Array.isArray(lastTxLifecycle?.timeline) && lastTxLifecycle.timeline.length > 0 && (
+                      <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                        {lastTxLifecycle.timeline
+                          .slice()
+                          .reverse()
+                          .map((step) => txStatusLabel(step.status))
+                          .join(" -> ")}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

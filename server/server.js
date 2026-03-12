@@ -18,6 +18,7 @@ const db = {
   notifications: new Map(),
   idempotency: new Map(),
   onchainTxs: new Map(),
+  onchainOperations: new Map(),
   copySettings: new Map(),
   rateLimits: new Map(),
   webhookReplay: new Map()
@@ -271,6 +272,61 @@ function buildMockTx(symbol) {
     confirmedAt: new Date().toISOString()
   };
 }
+function createOnchainOperation({ kind = "trade", userId, token, side, idempotencyKey, leaderUserId = null }) {
+  const now = new Date().toISOString();
+  const operationId = `op_${Date.now()}_${randomHex(6)}`;
+  const operation = {
+    operationId,
+    kind,
+    userId: String(userId || ""),
+    leaderUserId: leaderUserId ? String(leaderUserId) : null,
+    token: String(token || "").toUpperCase(),
+    side: String(side || "").toUpperCase(),
+    idempotencyKey: String(idempotencyKey || ""),
+    status: "requested",
+    createdAt: now,
+    updatedAt: now,
+    txHash: null,
+    explorerUrl: null,
+    executionMode: null,
+    error: null,
+    timeline: [{ status: "requested", at: now, note: "Operation requested" }]
+  };
+  db.onchainOperations.set(operationId, operation);
+  return operation;
+}
+
+function readOnchainOperation(operationId) {
+  const key = String(operationId || "").trim();
+  return key ? db.onchainOperations.get(key) || null : null;
+}
+
+function updateOnchainOperation(operationId, status, patch = {}) {
+  const operation = readOnchainOperation(operationId);
+  if (!operation) return null;
+
+  const nextStatus = String(status || operation.status || "").toLowerCase();
+  const validStatuses = new Set(["requested", "submitted", "confirmed", "failed"]);
+  if (!validStatuses.has(nextStatus)) return operation;
+
+  const now = new Date().toISOString();
+  if (operation.status !== nextStatus) {
+    operation.timeline.unshift({
+      status: nextStatus,
+      at: now,
+      note: patch.note || null
+    });
+  }
+
+  operation.status = nextStatus;
+  operation.updatedAt = now;
+  if (patch.txHash !== undefined) operation.txHash = patch.txHash || null;
+  if (patch.explorerUrl !== undefined) operation.explorerUrl = patch.explorerUrl || null;
+  if (patch.executionMode !== undefined) operation.executionMode = patch.executionMode || null;
+  if (patch.error !== undefined) operation.error = patch.error || null;
+
+  return operation;
+}
 
 function getOrCreateUser(userId) {
   if (!db.users.has(userId)) {
@@ -519,7 +575,7 @@ function makeTradeQuote({ user, token, side = "BUY", amountUsdc, tokenAmount, sl
   };
 }
 
-function executeTradeForUser(user, { token, side = "BUY", amountUsdc, tokenAmount, sellPercent, executionMode = "SIMULATED", onchainTx = null, copyFrom = null }) {
+function executeTradeForUser(user, { token, side = "BUY", amountUsdc, tokenAmount, sellPercent, executionMode = "SIMULATED", onchainTx = null, onchainOperation = null, copyFrom = null }) {
   const normalizedToken = String(token).toUpperCase();
   const price = tokenPrices[normalizedToken];
   if (!price) {
@@ -573,6 +629,8 @@ function executeTradeForUser(user, { token, side = "BUY", amountUsdc, tokenAmoun
       realizedPnl: 0,
       executionMode,
       onchainTxHash: onchainTx?.txHash || null,
+      txStatus: onchainOperation?.status || onchainTx?.status || null,
+      operationId: onchainOperation?.operationId || null,
       copyFrom,
       sellPercent: Number(sellPercent || 0) > 0 ? Number(sellPercent) : null,
       at: new Date().toISOString()
@@ -636,6 +694,8 @@ function executeTradeForUser(user, { token, side = "BUY", amountUsdc, tokenAmoun
       realizedPnl: realized,
       executionMode,
       onchainTxHash: onchainTx?.txHash || null,
+      txStatus: onchainOperation?.status || onchainTx?.status || null,
+      operationId: onchainOperation?.operationId || null,
       copyFrom,
       sellPercent: Number(sellPercent || 0) > 0 ? Number(sellPercent) : null,
       at: new Date().toISOString()
@@ -657,76 +717,101 @@ function resolveExecutorArgs(template, vars) {
   });
 }
 
-async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount, idempotencyKey, onchain = {} }) {
-  if (!ENABLE_REAL_ONCHAIN || !BASE_RPC_URL || !TRADE_EXECUTOR_ADDRESS || !SERVER_SIGNER_PRIVATE_KEY) {
-    return {
-      tx: buildMockTx(String(token).toUpperCase()),
-      mode: "ONCHAIN_MOCK"
-    };
-  }
-
-  const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
-  const signer = new ethers.Wallet(SERVER_SIGNER_PRIVATE_KEY, provider);
-  const iface = new ethers.Interface(TRADE_EXECUTOR_ABI);
-
-  const resolved = findTokenByContractOrSymbol(token);
-  if (!resolved) {
-    const err = new Error("token_not_found");
-    err.code = 404;
-    throw err;
-  }
-
-  const tokenAddress = resolved.contract;
-  const normalizedSide = String(side).toUpperCase();
-  const sideInt = normalizedSide === "BUY" ? 0 : 1;
-  const quote = makeTradeQuote({
-    user,
-    token: resolved.symbol,
-    side: normalizedSide,
-    amountUsdc,
-    tokenAmount,
-    slippageBps: onchain.slippageBps || 50
-  });
-  const usdcAmount = BigInt(Math.round(Number(amountUsdc || quote.inputUsdc || 0) * 1e6));
-  const slippageBps = Math.max(0, Number(onchain.slippageBps || quote.slippageBps || 50));
-  const derivedMinOut = normalizedSide === "BUY"
-    ? Math.floor(Number(quote.outTokenAmount || 0) * 1e6 * (1 - slippageBps / 10000))
-    : Math.floor(Number(quote.outUsdc || 0) * 1e6 * (1 - slippageBps / 10000));
-  const minOut = BigInt(Math.max(0, Number(onchain.minOut ?? derivedMinOut)));
-  const recipient = user.auth?.address || signer.address;
-  const orderId = ethers.id(user.userId + ":" + idempotencyKey);
-
-  let data;
-  let functionName;
-  let args;
-  if (onchain.calldata) {
-    data = onchain.calldata;
-  } else {
-    functionName = onchain.functionName || TRADE_EXECUTOR_FUNCTION;
-    const vars = { tokenAddress, sideInt, usdcAmount, minOut, recipient, orderId, tokenAmount };
-    args = Array.isArray(onchain.args) && onchain.args.length > 0
-      ? onchain.args
-      : resolveExecutorArgs(TRADE_EXECUTOR_ARGS_TEMPLATE, vars);
-    data = iface.encodeFunctionData(functionName, args);
-  }
-
-  const txReq = {
-    to: TRADE_EXECUTOR_ADDRESS,
-    data: appendBuilderDataSuffix(data),
-    value: onchain.valueWei ? BigInt(onchain.valueWei) : 0n
+async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount, idempotencyKey, operationId = null, onchain = {} }) {
+  const markFailed = (err, note = null) => {
+    if (!operationId) return;
+    updateOnchainOperation(operationId, "failed", {
+      error: String(err?.message || "onchain_tx_failed"),
+      note: note || "Onchain operation failed"
+    });
   };
 
-  if (onchain.gasLimit) txReq.gasLimit = BigInt(onchain.gasLimit);
+  try {
+    if (!ENABLE_REAL_ONCHAIN || !BASE_RPC_URL || !TRADE_EXECUTOR_ADDRESS || !SERVER_SIGNER_PRIVATE_KEY) {
+      const tx = buildMockTx(String(token).toUpperCase());
+      if (operationId) {
+        updateOnchainOperation(operationId, "submitted", {
+          txHash: tx.txHash,
+          explorerUrl: tx.explorerUrl,
+          executionMode: "ONCHAIN_MOCK",
+          note: "Mock tx submitted"
+        });
+        updateOnchainOperation(operationId, "confirmed", {
+          txHash: tx.txHash,
+          explorerUrl: tx.explorerUrl,
+          executionMode: "ONCHAIN_MOCK",
+          note: "Mock tx confirmed"
+        });
+      }
 
-  if (onchain.dryRun === true) {
-    const callReq = {
-      to: txReq.to,
-      data: txReq.data,
-      value: txReq.value
+      return {
+        tx,
+        mode: "ONCHAIN_MOCK",
+        operation: readOnchainOperation(operationId)
+      };
+    }
+
+    const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
+    const signer = new ethers.Wallet(SERVER_SIGNER_PRIVATE_KEY, provider);
+    const iface = new ethers.Interface(TRADE_EXECUTOR_ABI);
+
+    const resolved = findTokenByContractOrSymbol(token);
+    if (!resolved) {
+      const err = new Error("token_not_found");
+      err.code = 404;
+      throw err;
+    }
+
+    const tokenAddress = resolved.contract;
+    const normalizedSide = String(side).toUpperCase();
+    const sideInt = normalizedSide === "BUY" ? 0 : 1;
+    const quote = makeTradeQuote({
+      user,
+      token: resolved.symbol,
+      side: normalizedSide,
+      amountUsdc,
+      tokenAmount,
+      slippageBps: onchain.slippageBps || 50
+    });
+    const usdcAmount = BigInt(Math.round(Number(amountUsdc || quote.inputUsdc || 0) * 1e6));
+    const slippageBps = Math.max(0, Number(onchain.slippageBps || quote.slippageBps || 50));
+    const derivedMinOut = normalizedSide === "BUY"
+      ? Math.floor(Number(quote.outTokenAmount || 0) * 1e6 * (1 - slippageBps / 10000))
+      : Math.floor(Number(quote.outUsdc || 0) * 1e6 * (1 - slippageBps / 10000));
+    const minOut = BigInt(Math.max(0, Number(onchain.minOut ?? derivedMinOut)));
+    const recipient = user.auth?.address || signer.address;
+    const orderId = ethers.id(user.userId + ":" + idempotencyKey);
+
+    let data;
+    let functionName;
+    let args;
+    if (onchain.calldata) {
+      data = onchain.calldata;
+    } else {
+      functionName = onchain.functionName || TRADE_EXECUTOR_FUNCTION;
+      const vars = { tokenAddress, sideInt, usdcAmount, minOut, recipient, orderId, tokenAmount };
+      args = Array.isArray(onchain.args) && onchain.args.length > 0
+        ? onchain.args
+        : resolveExecutorArgs(TRADE_EXECUTOR_ARGS_TEMPLATE, vars);
+      data = iface.encodeFunctionData(functionName, args);
+    }
+
+    const txReq = {
+      to: TRADE_EXECUTOR_ADDRESS,
+      data: appendBuilderDataSuffix(data),
+      value: onchain.valueWei ? BigInt(onchain.valueWei) : 0n
     };
-    const callOut = await provider.call(callReq);
-    return {
-      tx: {
+
+    if (onchain.gasLimit) txReq.gasLimit = BigInt(onchain.gasLimit);
+
+    if (onchain.dryRun === true) {
+      const callReq = {
+        to: txReq.to,
+        data: txReq.data,
+        value: txReq.value
+      };
+      const callOut = await provider.call(callReq);
+      const tx = {
         chainId: 8453,
         network: "base",
         token: resolved.symbol,
@@ -741,22 +826,49 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
           builderCode: BUILDER_CODE || null,
           builderSuffixApplied: !!BUILDER_DATA_SUFFIX
         }
-      },
-      quote,
-      mode: "ONCHAIN_SIMULATED"
-    };
-  }
+      };
 
-  const sent = await signer.sendTransaction(txReq);
-  const receipt = await sent.wait(1);
-  if (!receipt || receipt.status !== 1) {
-    const err = new Error("onchain_tx_failed");
-    err.code = 502;
-    throw err;
-  }
+      if (operationId) {
+        updateOnchainOperation(operationId, "submitted", {
+          txHash: tx.txHash,
+          explorerUrl: tx.explorerUrl,
+          executionMode: "ONCHAIN_SIMULATED",
+          note: "Dry run submitted"
+        });
+        updateOnchainOperation(operationId, "confirmed", {
+          txHash: tx.txHash,
+          explorerUrl: tx.explorerUrl,
+          executionMode: "ONCHAIN_SIMULATED",
+          note: "Dry run confirmed"
+        });
+      }
 
-  return {
-    tx: {
+      return {
+        tx,
+        quote,
+        mode: "ONCHAIN_SIMULATED",
+        operation: readOnchainOperation(operationId)
+      };
+    }
+
+    const sent = await signer.sendTransaction(txReq);
+    if (operationId) {
+      updateOnchainOperation(operationId, "submitted", {
+        txHash: sent.hash,
+        explorerUrl: "https://basescan.org/tx/" + sent.hash,
+        executionMode: "ONCHAIN_REAL",
+        note: "Transaction submitted"
+      });
+    }
+
+    const receipt = await sent.wait(1);
+    if (!receipt || receipt.status !== 1) {
+      const err = new Error("onchain_tx_failed");
+      err.code = 502;
+      throw err;
+    }
+
+    const tx = {
       chainId: 8453,
       network: "base",
       token: resolved.symbol,
@@ -768,9 +880,26 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
       quote,
       builderCode: BUILDER_CODE || null,
       builderSuffixApplied: !!BUILDER_DATA_SUFFIX
-    },
-    mode: "ONCHAIN_REAL"
-  };
+    };
+
+    if (operationId) {
+      updateOnchainOperation(operationId, "confirmed", {
+        txHash: tx.txHash,
+        explorerUrl: tx.explorerUrl,
+        executionMode: "ONCHAIN_REAL",
+        note: "Transaction confirmed"
+      });
+    }
+
+    return {
+      tx,
+      mode: "ONCHAIN_REAL",
+      operation: readOnchainOperation(operationId)
+    };
+  } catch (err) {
+    markFailed(err);
+    throw err;
+  }
 }
 
 function getContentType(file) {
@@ -1399,6 +1528,14 @@ const server = createServer(async (req, res) => {
     try {
       const user = getOrCreateUser(userId);
       const resolvedInputs = resolveTradeInputs(user, { token, side, amountUsdc, tokenAmount, sellPercent });
+      const operation = createOnchainOperation({
+        kind: "trade",
+        userId,
+        token,
+        side: resolvedInputs.side,
+        idempotencyKey
+      });
+
       const onchainExec = await sendTradeExecutorTx({
         user,
         token,
@@ -1406,9 +1543,12 @@ const server = createServer(async (req, res) => {
         amountUsdc: resolvedInputs.amountUsdc,
         tokenAmount: resolvedInputs.tokenAmount,
         idempotencyKey,
+        operationId: operation.operationId,
         onchain
       });
       const tx = onchainExec.tx;
+      const txLifecycle = onchainExec.operation || readOnchainOperation(operation.operationId);
+
       const out = executeTradeForUser(user, {
         token,
         side: resolvedInputs.side,
@@ -1416,13 +1556,15 @@ const server = createServer(async (req, res) => {
         tokenAmount: resolvedInputs.tokenAmount,
         sellPercent,
         executionMode: onchainExec.mode,
-        onchainTx: tx
+        onchainTx: tx,
+        onchainOperation: txLifecycle
       });
 
       db.onchainTxs.set(tx.txHash, {
         ...tx,
         userId,
         tradeId: out.trade.id,
+        operationId: txLifecycle?.operationId || operation.operationId,
         copyFrom: null
       });
 
@@ -1440,7 +1582,8 @@ const server = createServer(async (req, res) => {
         holdings: out.summary.holdings,
         positions: out.summary.positions,
         trade: out.trade,
-        tx
+        tx,
+        txLifecycle
       };
 
       db.idempotency.set(idemKey, payload);
@@ -1497,6 +1640,15 @@ const server = createServer(async (req, res) => {
         ? rounded((Number(tokenAmount || 0) > 0 ? Number(tokenAmount || 0) : Number(amountUsdc || 0) / (tokenPrices[String(token).toUpperCase()] || 1)) * ratio, 6)
         : null;
 
+      const operation = createOnchainOperation({
+        kind: "copytrade",
+        userId: followerUserId,
+        leaderUserId,
+        token,
+        side: normalizedSide,
+        idempotencyKey
+      });
+
       const onchainExec = await sendTradeExecutorTx({
         user: follower,
         token,
@@ -1504,12 +1656,15 @@ const server = createServer(async (req, res) => {
         amountUsdc: plannedAmountUsdc,
         tokenAmount: plannedTokenAmount,
         idempotencyKey,
+        operationId: operation.operationId,
         onchain: {
           ...onchain,
           slippageBps: onchain.slippageBps || settings.slippageBps
         }
       });
       const tx = onchainExec.tx;
+      const txLifecycle = onchainExec.operation || readOnchainOperation(operation.operationId);
+
       const out = executeTradeForUser(follower, {
         token,
         side: normalizedSide,
@@ -1517,6 +1672,7 @@ const server = createServer(async (req, res) => {
         tokenAmount: plannedTokenAmount,
         executionMode: onchainExec.mode,
         onchainTx: tx,
+        onchainOperation: txLifecycle,
         copyFrom: leaderUserId
       });
 
@@ -1525,6 +1681,7 @@ const server = createServer(async (req, res) => {
         userId: followerUserId,
         leaderUserId,
         tradeId: out.trade.id,
+        operationId: txLifecycle?.operationId || operation.operationId,
         copyFrom: leaderUserId
       });
 
@@ -1548,7 +1705,8 @@ const server = createServer(async (req, res) => {
         holdings: out.summary.holdings,
         positions: out.summary.positions,
         trade: out.trade,
-        tx
+        tx,
+        txLifecycle
       };
 
       db.idempotency.set(idemKey, payload);
@@ -1634,7 +1792,24 @@ const server = createServer(async (req, res) => {
     if (!txHash) return json(res, 400, { ok: false, error: "txHash required" });
     const tx = db.onchainTxs.get(txHash);
     if (!tx) return json(res, 404, { ok: false, error: "tx_not_found" });
-    return json(res, 200, { ok: true, tx });
+    const operation = tx.operationId ? readOnchainOperation(tx.operationId) : null;
+    return json(res, 200, { ok: true, tx, operation });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/onchain/operation") {
+    const operationId = String(url.searchParams.get("operationId") || "").trim();
+    const txHash = String(url.searchParams.get("txHash") || "").trim();
+
+    let operation = null;
+    if (operationId) operation = readOnchainOperation(operationId);
+
+    if (!operation && txHash) {
+      const tx = db.onchainTxs.get(txHash);
+      if (tx?.operationId) operation = readOnchainOperation(tx.operationId);
+    }
+
+    if (!operation) return json(res, 404, { ok: false, error: "operation_not_found" });
+    return json(res, 200, { ok: true, operation });
   }
 
   if (req.method === "GET" && url.pathname === "/api/wallet/summary") {

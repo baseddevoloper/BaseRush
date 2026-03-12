@@ -68,6 +68,7 @@ Sunucuda aktif endpointler:
 - `GET /api/miniapp/manifest-status`
 - `GET /api/onchain/config`
 - `GET /api/onchain/tx`
+- `GET /api/onchain/operation`
 - `POST /api/onchain/smoke`
 
 Ek backend kabiliyetleri:
@@ -93,6 +94,7 @@ React UI tarafinda aktif ozellikler:
 - Feed kartlari (buy/sell/note akis tarzi)
 - Premium karti + copy settings paneli
 - Notification enable aksiyonu
+- Last onchain tx kartinda dinamik lifecycle status + operation id + timeline
 
 ### 2.3 Mini app ve manifest durumu
 - `.well-known/farcaster.json` repoda mevcut

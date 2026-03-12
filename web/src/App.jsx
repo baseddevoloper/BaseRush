@@ -933,9 +933,24 @@ export default function App() {
 
   async function ensureFarcasterAuth({ force = false } = {}) {
     if (authVerified && !force) return true;
+
+    const statusUserId = encodeURIComponent(userId || "");
+    try {
+      const status = await apiGet(`/api/auth/status?userId=${statusUserId}`);
+      if (status?.authVerified) {
+        if (status.userId) setUserId(status.userId);
+        setAuthVerified(true);
+        return true;
+      }
+    } catch {
+      // continue; force flow can still request fresh auth token
+    }
+
+    if (!force) throw new Error("farcaster_auth_required");
+
     const identity = await resolveMiniAppIdentity();
     identity.address = wagmiAddress || identity.address;
-    const out = await loginWithFarcasterAuth(identity, userId, { force, strict: force });
+    const out = await loginWithFarcasterAuth(identity, userId, { force: true, strict: true });
     setUserId(out.session.userId);
     setAuthVerified(!!out.session.authVerified);
     return !!out.session.authVerified;
@@ -1962,6 +1977,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 
 

@@ -994,6 +994,15 @@ function isWalletSessionUser(userId) {
   return !!(user?.auth?.provider === "base" && user?.auth?.address);
 }
 
+function findUserIdByFid(fid) {
+  const target = Number(fid || 0) || 0;
+  if (!target) return "";
+  for (const [id, user] of db.users.entries()) {
+    if (Number(user?.auth?.fid || 0) === target) return id;
+  }
+  return "";
+}
+
 async function enforceRequestAuth(req, userId) {
   if (!FC_AUTH_REQUIRED) return;
   try {
@@ -1063,6 +1072,53 @@ const server = createServer(async (req, res) => {
       });
     } catch (err) {
       return json(res, httpStatusFromError(err), { ok: false, error: err.message || "webhook_failed" });
+    }
+  }
+  if (req.method === "GET" && url.pathname === "/api/auth/status") {
+    const requestedUserId = String(url.searchParams.get("userId") || "").trim();
+    const token = getBearerToken(req);
+
+    if (!token) {
+      return json(res, 200, {
+        ok: true,
+        authVerified: false,
+        userId: requestedUserId || null,
+        reason: "missing_auth_bearer"
+      });
+    }
+
+    try {
+      const verified = await verifyQuickAuthToken(token);
+      const payload = verified.payload || {};
+      const fid = Number(payload.sub || 0) || null;
+      const address = payload.address || null;
+
+      const matchedUserId = requestedUserId || findUserIdByFid(fid) || (fid ? `fc_${fid}` : "");
+      let user = null;
+      if (matchedUserId) {
+        user = getOrCreateUser(matchedUserId);
+        bindUserToQuickAuth(user, { verified: true, payload });
+      }
+
+      return json(res, 200, {
+        ok: true,
+        authVerified: true,
+        userId: matchedUserId || null,
+        fid,
+        address,
+        provider: "farcaster",
+        domain: verified.domain || null,
+        quickAuthExp: payload.exp || null
+      });
+    } catch (err) {
+      const out = { ok: false, error: err.message || "invalid_quick_auth_token" };
+      if (FC_AUTH_DEBUG) {
+        out.debug = {
+          ...getAuthDebugSnapshot(),
+          verifyAttempts: Array.isArray(err?.details) ? err.details : []
+        };
+      }
+      return json(res, httpStatusFromError(err), out);
     }
   }
   if (req.method === "POST" && ["/api/auth/login", "/api/auth/farcaster/login", "/api/auth/base/login"].includes(url.pathname)) {
@@ -1633,4 +1689,6 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 export { server, db, getOrCreateUser };
+
+
 

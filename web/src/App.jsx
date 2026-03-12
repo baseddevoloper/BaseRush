@@ -845,22 +845,57 @@ export default function App() {
     const inMini = await isMiniAppRuntime();
     if (!inMini) throw new Error("open_in_farcaster_or_base_app");
 
-    let result;
+    const provider =
+      sdk?.wallet?.ethProvider ||
+      (typeof window !== "undefined" ? window?.miniapp?.sdk?.wallet?.ethProvider : null) ||
+      null;
+
+    let connectedAddress = "";
+
     try {
-      result = await withTimeout(
+      const result = await withTimeout(
         () => connectAsync({ connector: farcasterMiniApp(), chainId: 8453 }),
         12000,
         "wallet.connect"
       );
-    } catch (err) {
-      if (identity?.address) {
-        setConnectHint("Wallet approval timed out. Using mini app address.");
-        return String(identity.address);
-      }
-      throw new Error(err?.message || "wallet_connect_timeout");
+      connectedAddress = result?.accounts?.[0] || "";
+    } catch {
+      // fallback to direct provider request
     }
 
-    const connectedAddress = result?.accounts?.[0] || wagmiAddress || identity?.address || "";
+    if (!connectedAddress && provider?.request) {
+      try {
+        const accounts = await withTimeout(
+          () => provider.request({ method: "eth_requestAccounts" }),
+          12000,
+          "wallet.eth_requestAccounts"
+        );
+        connectedAddress = Array.isArray(accounts) ? String(accounts[0] || "") : "";
+
+        try {
+          await withTimeout(
+            () => provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }),
+            4000,
+            "wallet.switchChain"
+          );
+        } catch {
+          // keep going on chain switch failure
+        }
+
+        if (connectedAddress) {
+          setConnectHint("Wallet prompt approved on mobile.");
+        }
+      } catch (err) {
+        const reason = String(err?.message || "wallet_request_rejected");
+        if (identity?.address) {
+          setConnectHint(`Wallet prompt failed (${reason}). Using mini app address.`);
+          return String(identity.address);
+        }
+        throw new Error(reason);
+      }
+    }
+
+    connectedAddress = connectedAddress || wagmiAddress || identity?.address || "";
     if (!connectedAddress) throw new Error("wallet_not_connected");
     return String(connectedAddress);
   }
@@ -1888,6 +1923,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 
 

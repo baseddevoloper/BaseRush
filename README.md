@@ -11,6 +11,7 @@ Slogan: **Trade Fast. Move First.**
 - Takip ettiklerim + bildirim merkezi
 - Premium ($20/ay USDC) ve copy trade kilidi
 - React + Tailwind + shadcn/ui tabanli yeni arayuz (`web/`)
+- Legacy `app.js`/`app.css` akis devre disi (server sadece `web-dist` servis eder)
 
 ## Calistirma
 Backend:

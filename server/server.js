@@ -2179,16 +2179,10 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && ["/", "/index.html"].includes(url.pathname)) {
     if (await serveStatic("web-dist/index.html", res)) return;
-    if (await serveStatic("index.html", res)) return;
-  }
-
-  if (req.method === "GET" && ["/app.css", "/app.js"].includes(url.pathname)) {
-    if (await serveStatic(pathNoSlash, res)) return;
   }
 
   if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
     if (await serveStatic("web-dist/index.html", res)) return;
-    if (await serveStatic("index.html", res)) return;
   }
 
   res.writeHead(404);

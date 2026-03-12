@@ -1620,7 +1620,7 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-2">
                 <Input type="number" value={buyAmount} onChange={(e) => setBuyAmount(e.target.value)} />
-                <Button onClick={handleBuyAndNote} disabled={!walletConnected || loading}>Buy</Button>
+                <Button onClick={handleBuyAndNote} disabled={!walletConnected || !authVerified || loading}>Buy</Button>
               </div>
               <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Write note and buy" />
 
@@ -1628,14 +1628,14 @@ export default function App() {
 
               <div className="grid grid-cols-4 gap-2">
                 {[10, 25, 50, 100].map((pct) => (
-                  <Button key={pct} variant="ghost" onClick={() => handleSellByPct(pct)} disabled={!walletConnected || !currentPosition || loading}>
+                  <Button key={pct} variant="ghost" onClick={() => handleSellByPct(pct)} disabled={!walletConnected || !authVerified || !currentPosition || loading}>
                     %{pct}
                   </Button>
                 ))}
               </div>
               <div className="grid grid-cols-[1fr_auto] gap-2">
                 <Input type="number" min="1" max="100" step="1" value={customSell} onChange={(e) => setCustomSell(e.target.value)} placeholder="Custom %" />
-                <Button variant="outline" onClick={handleSellCustomPercent} disabled={!walletConnected || loading}>Sell %</Button>
+                <Button variant="outline" onClick={handleSellCustomPercent} disabled={!walletConnected || !authVerified || loading}>Sell %</Button>
               </div>
             </CardContent>
           </Card>
@@ -1808,7 +1808,7 @@ export default function App() {
                   <p>{onchainConfig?.signerConfigured ? "Configured" : "Missing"}</p>
                 </div>
               </div>
-              <Button variant="outline" className="w-full" onClick={handleOnchainSmoke} disabled={!walletConnected || loading}>
+              <Button variant="outline" className="w-full" onClick={handleOnchainSmoke} disabled={!walletConnected || !authVerified || loading}>
                 Run Onchain Smoke
               </Button>
               {smokeStatus?.ok && (
@@ -1856,10 +1856,10 @@ export default function App() {
                 <span className="text-sm text-muted-foreground">Premium</span>
                 <Badge variant={premium.active ? "success" : "muted"}>{premium.active ? "Active" : "Locked"}</Badge>
               </div>
-              <Button className="w-full" onClick={handlePremium} disabled={!walletConnected || premium.active || loading}>
+              <Button className="w-full" onClick={handlePremium} disabled={!walletConnected || !authVerified || premium.active || loading}>
                 <Crown className="mr-2 h-4 w-4" /> Activate Premium ($20)
               </Button>
-              <Button variant="outline" className="w-full" onClick={handleCopyTradeTest} disabled={!walletConnected || !premium.active || loading}>
+              <Button variant="outline" className="w-full" onClick={handleCopyTradeTest} disabled={!walletConnected || !authVerified || !premium.active || loading}>
                 Run Copy Trade (Premium)
               </Button>
               <Separator />
@@ -1912,7 +1912,7 @@ export default function App() {
                     />
                   </div>
                 </div>
-                <Button variant="outline" className="w-full" onClick={handleSaveCopySettings} disabled={!walletConnected || loading}>
+                <Button variant="outline" className="w-full" onClick={handleSaveCopySettings} disabled={!walletConnected || !authVerified || loading}>
                   Save Copy Settings
                 </Button>
               </div>
@@ -1944,6 +1944,10 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
 
 
 

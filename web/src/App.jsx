@@ -22,6 +22,7 @@ import { Separator } from "./components/ui/separator";
 import { sdk } from "@farcaster/miniapp-sdk";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { useAccount, useConnect } from "wagmi";
+import { encodeFunctionData, parseUnits } from "viem";
 
 const LS_KEYS = {
   activeToken: "arena_active_token",
@@ -53,6 +54,7 @@ function readLocalJSON(key, fallback) {
 }
 
 const TOKENS = ["ETH", "AERO", "DEGEN", "BRETT", "USDC"];
+const USDC_TRANSFER_ABI = [{ type: "function", name: "transfer", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ name: "", type: "bool" }] }];
 const POPULAR_TOKENS = [
   { symbol: "ETH", contract: "0x4200000000000000000000000000000000000006", verified: true },
   { symbol: "USDC", contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", verified: true },
@@ -1204,9 +1206,61 @@ export default function App() {
 
   async function handleDeposit() {
     if (!userId) return;
+    const amount = Number(depositAmount || 0);
+    if (!(amount > 0)) {
+      alert("Deposit amount must be greater than 0.");
+      return;
+    }
+
     setLoading(true);
     try {
-      await apiPost("/api/balance/deposit-usdc", { userId, amount: Number(depositAmount || 0) });
+      await requireProtectedAuth();
+
+      const intent = await apiGet(
+        `/api/balance/deposit-intent?userId=${encodeURIComponent(userId)}&amount=${encodeURIComponent(amount)}`
+      );
+
+      const provider =
+        sdk?.wallet?.ethProvider ||
+        (typeof window !== "undefined" ? window?.miniapp?.sdk?.wallet?.ethProvider : null) ||
+        null;
+
+      if (intent.mode === "onchain_required" && provider?.request) {
+        const txData = encodeFunctionData({
+          abi: USDC_TRANSFER_ABI,
+          functionName: "transfer",
+          args: [intent.depositTo, parseUnits(String(amount), 6)]
+        });
+
+        const txParams = {
+          to: intent.token.address,
+          data: txData,
+          value: "0x0"
+        };
+        if (wagmiAddress) txParams.from = wagmiAddress;
+
+        const txHash = await withTimeout(
+          () =>
+            provider.request({
+              method: "eth_sendTransaction",
+              params: [txParams]
+            }),
+          20000,
+          "wallet.usdcDeposit"
+        );
+
+        await apiPost("/api/balance/deposit-usdc/confirm", {
+          userId,
+          amount,
+          txHash
+        });
+
+        setConnectHint("USDC deposit confirmed onchain.");
+      } else {
+        await apiPost("/api/balance/deposit-usdc", { userId, amount });
+        setConnectHint("USDC deposit simulated (onchain config missing).");
+      }
+
       await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Deposit failed: ${err.message}`);

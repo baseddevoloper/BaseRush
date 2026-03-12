@@ -54,6 +54,8 @@ TRADE_EXECUTOR_FUNCTION=executeTrade
 TRADE_EXECUTOR_ABI_JSON=["function executeTrade(address token,uint8 side,uint256 amountUsdc,uint256 minOut,address recipient,bytes32 orderId)"]
 ONCHAIN_CONFIRMATIONS=1
 ONCHAIN_CONFIRM_TIMEOUT_MS=120000
+USDC_BASE_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+USDC_DEPOSIT_RECEIVER=0xYourVaultOrTreasury
 ```
 
 Kontrol endpointi:
@@ -63,12 +65,15 @@ Onchain endpointler:
 - `POST /api/trade/execute-onchain`
 - `POST /api/copytrade/execute-onchain`
 - `GET /api/onchain/tx?txHash=...`
+- `GET /api/balance/deposit-intent`
+- `POST /api/balance/deposit-usdc/confirm`
 
 Not:
 - Config eksikse sistem otomatik `ONCHAIN_MOCK` moduna duser.
 - Gercek modda tx once `submitted` doner; confirm/fail arka planda asenkron islenir.
 - Confirm polling parametreleri: `ONCHAIN_CONFIRMATIONS`, `ONCHAIN_CONFIRM_TIMEOUT_MS`.
 - Canli kullanimda signer private key yerine KMS/HSM tercih edilmelidir.
+- Deposit akisi: mini app wallet -> USDC transfer -> backend tx receipt/log verify -> bakiye kredi.
 
 - Opsiyonel ABI arg mapping: `TRADE_EXECUTOR_ARGS_TEMPLATE_JSON=["$tokenAddress","$sideInt","$usdcAmount","$minOut","$recipient","$orderId"]`
 - Smoke endpoint: `POST /api/onchain/smoke` (tx atmadan kontrat call simule etmek icin).

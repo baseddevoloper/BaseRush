@@ -328,6 +328,47 @@ function updateOnchainOperation(operationId, status, patch = {}) {
   return operation;
 }
 
+function toPublicOnchainTx(tx) {
+  if (!tx) return null;
+  return {
+    chainId: tx.chainId,
+    network: tx.network,
+    token: tx.token,
+    status: tx.status,
+    txHash: tx.txHash,
+    explorerUrl: tx.explorerUrl || null,
+    confirmedAt: tx.confirmedAt || null,
+    blockNumber: tx.blockNumber || null,
+    quote: tx.quote || null,
+    builderCode: tx.builderCode || null,
+    builderSuffixApplied: !!tx.builderSuffixApplied,
+    operationId: tx.operationId || null
+  };
+}
+
+function toPublicOnchainOperation(operation) {
+  if (!operation) return null;
+  return {
+    operationId: operation.operationId,
+    kind: operation.kind,
+    token: operation.token,
+    side: operation.side,
+    status: operation.status,
+    createdAt: operation.createdAt,
+    updatedAt: operation.updatedAt,
+    txHash: operation.txHash || null,
+    explorerUrl: operation.explorerUrl || null,
+    executionMode: operation.executionMode || null,
+    error: operation.error || null,
+    timeline: Array.isArray(operation.timeline)
+      ? operation.timeline.map((step) => ({
+          status: step.status,
+          at: step.at,
+          note: step.note || null
+        }))
+      : []
+  };
+}
 function getOrCreateUser(userId) {
   if (!db.users.has(userId)) {
     db.users.set(userId, {
@@ -1793,7 +1834,7 @@ const server = createServer(async (req, res) => {
     const tx = db.onchainTxs.get(txHash);
     if (!tx) return json(res, 404, { ok: false, error: "tx_not_found" });
     const operation = tx.operationId ? readOnchainOperation(tx.operationId) : null;
-    return json(res, 200, { ok: true, tx, operation });
+    return json(res, 200, { ok: true, tx: toPublicOnchainTx(tx), operation: toPublicOnchainOperation(operation) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/onchain/operation") {
@@ -1809,7 +1850,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (!operation) return json(res, 404, { ok: false, error: "operation_not_found" });
-    return json(res, 200, { ok: true, operation });
+    return json(res, 200, { ok: true, operation: toPublicOnchainOperation(operation) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/wallet/summary") {

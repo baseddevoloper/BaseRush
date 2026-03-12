@@ -55,7 +55,11 @@ TRADE_EXECUTOR_ABI_JSON=["function executeTrade(address token,uint8 side,uint256
 ONCHAIN_CONFIRMATIONS=1
 ONCHAIN_CONFIRM_TIMEOUT_MS=120000
 USDC_BASE_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
-USDC_DEPOSIT_RECEIVER=0xYourVaultOrTreasury
+USDC_DEPOSIT_RECEIVER=0xYourTradeExecutorAddress
+UNISWAP_V3_ROUTER=0x2626664c2603336E57B271c5C0b26F421741e481
+AERODROME_ROUTER=0xcF77a3Ba9A5CA399B7c97c74d54e5bE8D5e8f9F3
+AERODROME_FACTORY=0x420DD381b31aEf6683db6B902084cB0FFECe40Da
+DEFAULT_UNI_POOL_FEE=500
 ```
 
 Kontrol endpointi:
@@ -64,6 +68,7 @@ Kontrol endpointi:
 Onchain endpointler:
 - `POST /api/trade/execute-onchain`
 - `POST /api/copytrade/execute-onchain`
+- Kontrat: `executeTrade` (uyumluluk) + `executeTradeWithOptions` (Uniswap/Aerodrome)
 - `GET /api/onchain/tx?txHash=...`
 - `GET /api/balance/deposit-intent`
 - `POST /api/balance/deposit-usdc/confirm`
@@ -74,6 +79,7 @@ Not:
 - Confirm polling parametreleri: `ONCHAIN_CONFIRMATIONS`, `ONCHAIN_CONFIRM_TIMEOUT_MS`.
 - Canli kullanimda signer private key yerine KMS/HSM tercih edilmelidir.
 - Deposit akisi: mini app wallet -> USDC transfer -> backend tx receipt/log verify -> bakiye kredi.
+- Gercek trade icin `USDC_DEPOSIT_RECEIVER` TradeExecutor kontrat adresi olmalidir (kontrat USDC bakiyesi ile swap atar).
 
 - Opsiyonel ABI arg mapping: `TRADE_EXECUTOR_ARGS_TEMPLATE_JSON=["$tokenAddress","$sideInt","$usdcAmount","$minOut","$recipient","$orderId"]`
 - Smoke endpoint: `POST /api/onchain/smoke` (tx atmadan kontrat call simule etmek icin).

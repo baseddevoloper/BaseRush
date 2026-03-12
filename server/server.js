@@ -1130,12 +1130,22 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
       tokenAmount,
       slippageBps: onchain.slippageBps || 50
     });
-    const usdcAmount = BigInt(Math.round(Number(amountUsdc || quote.inputUsdc || 0) * 1e6));
+    const tokenDecimals = Number(resolved.decimals || 18);
+    const tokenAmountRaw = Number(tokenAmount || 0);
+    const amountUsdcRaw = Number(amountUsdc || quote.inputUsdc || 0);
+    const tokenAmountIn = tokenAmountRaw > 0 ? ethers.parseUnits(tokenAmountRaw.toFixed(Math.min(tokenDecimals, 8)), tokenDecimals) : 0n;
+    const usdcAmount = amountUsdcRaw > 0 ? ethers.parseUnits(amountUsdcRaw.toFixed(6), 6) : 0n;
+    const amountIn = normalizedSide === "BUY" ? usdcAmount : tokenAmountIn;
+
     const slippageBps = Math.max(0, Number(onchain.slippageBps || quote.slippageBps || 50));
+    const buyOutToken = Number(quote.outTokenAmount || 0) * (1 - slippageBps / 10000);
+    const sellOutUsdc = Number(quote.outUsdc || 0) * (1 - slippageBps / 10000);
     const derivedMinOut = normalizedSide === "BUY"
-      ? Math.floor(Number(quote.outTokenAmount || 0) * 1e6 * (1 - slippageBps / 10000))
-      : Math.floor(Number(quote.outUsdc || 0) * 1e6 * (1 - slippageBps / 10000));
-    const minOut = BigInt(Math.max(0, Number(onchain.minOut ?? derivedMinOut)));
+      ? (buyOutToken > 0 ? ethers.parseUnits(buyOutToken.toFixed(Math.min(tokenDecimals, 8)), tokenDecimals) : 0n)
+      : (sellOutUsdc > 0 ? ethers.parseUnits(sellOutUsdc.toFixed(6), 6) : 0n);
+    const minOut = onchain.minOut !== undefined && onchain.minOut !== null
+      ? BigInt(onchain.minOut)
+      : derivedMinOut;
     const recipient = user.auth?.address || signer.address;
     const orderId = ethers.id(user.userId + ":" + idempotencyKey);
 
@@ -1146,7 +1156,7 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
       data = onchain.calldata;
     } else {
       functionName = onchain.functionName || TRADE_EXECUTOR_FUNCTION;
-      const vars = { tokenAddress, sideInt, usdcAmount, minOut, recipient, orderId, tokenAmount };
+      const vars = { tokenAddress, sideInt, amountIn, usdcAmount: amountIn, minOut, recipient, orderId, tokenAmount, tokenDecimals, slippageBps };
       args = Array.isArray(onchain.args) && onchain.args.length > 0
         ? onchain.args
         : resolveExecutorArgs(TRADE_EXECUTOR_ARGS_TEMPLATE, vars);

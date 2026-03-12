@@ -51,6 +51,8 @@ SERVER_SIGNER_PRIVATE_KEY=0xYourServerSignerPrivateKey
 # opsiyonel:
 TRADE_EXECUTOR_FUNCTION=executeTrade
 TRADE_EXECUTOR_ABI_JSON=["function executeTrade(address token,uint8 side,uint256 amountUsdc,uint256 minOut,address recipient,bytes32 orderId)"]
+ONCHAIN_CONFIRMATIONS=1
+ONCHAIN_CONFIRM_TIMEOUT_MS=120000
 ```
 
 Kontrol endpointi:
@@ -63,6 +65,8 @@ Onchain endpointler:
 
 Not:
 - Config eksikse sistem otomatik `ONCHAIN_MOCK` moduna duser.
+- Gercek modda tx once `submitted` doner; confirm/fail arka planda asenkron islenir.
+- Confirm polling parametreleri: `ONCHAIN_CONFIRMATIONS`, `ONCHAIN_CONFIRM_TIMEOUT_MS`.
 - Canli kullanimda signer private key yerine KMS/HSM tercih edilmelidir.
 
 - Opsiyonel ABI arg mapping: `TRADE_EXECUTOR_ARGS_TEMPLATE_JSON=["$tokenAddress","$sideInt","$usdcAmount","$minOut","$recipient","$orderId"]`

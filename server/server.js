@@ -114,6 +114,8 @@ const FC_AUTH_REQUIRED = process.env.NODE_ENV === "test" ? false : String(proces
 const FC_QUICK_AUTH_ORIGIN = process.env.FC_QUICK_AUTH_ORIGIN || "https://auth.farcaster.xyz";
 const FC_AUTH_ALLOWED_DOMAINS = process.env.FC_AUTH_ALLOWED_DOMAINS || "";
 const FC_AUTH_DEBUG = process.env.NODE_ENV === "production" ? String(process.env.FC_AUTH_DEBUG || "false") === "true" : true;
+const ONCHAIN_CONFIRMATIONS = Math.max(1, Number(process.env.ONCHAIN_CONFIRMATIONS || 1));
+const ONCHAIN_CONFIRM_TIMEOUT_MS = Math.max(10_000, Number(process.env.ONCHAIN_CONFIRM_TIMEOUT_MS || 120_000));
 const quickAuthClient = createQuickAuthClient({ origin: FC_QUICK_AUTH_ORIGIN });
 
 function normalizePlainText(value, maxLen) {
@@ -412,6 +414,125 @@ function addNotification(userId, text, meta = {}) {
     channel: meta.channel || "in_app",
     type: meta.type || "system"
   });
+}
+
+function updateUserTradeLifecycle({ userId, tradeId = null, txHash = null, txStatus, error = null }) {
+  const key = String(userId || "").trim();
+  if (!key) return null;
+  const user = db.users.get(key);
+  if (!user || !Array.isArray(user.trades)) return null;
+
+  let trade = null;
+  if (tradeId) {
+    trade = user.trades.find((t) => t.id === tradeId) || null;
+  }
+  if (!trade && txHash) {
+    trade = user.trades.find((t) => t.onchainTxHash === txHash) || null;
+  }
+  if (!trade) return null;
+
+  trade.txStatus = String(txStatus || trade.txStatus || "").toLowerCase();
+  if (txHash) trade.onchainTxHash = txHash;
+  trade.txError = error || null;
+  trade.txUpdatedAt = new Date().toISOString();
+  return trade;
+}
+
+function scheduleOnchainConfirmation({ txHash, operationId = null, userId = null, tradeId = null, token = "", side = "", leaderUserId = null }) {
+  if (!ENABLE_REAL_ONCHAIN || !BASE_RPC_URL || !txHash) return;
+  const explorerUrl = "https://basescan.org/tx/" + txHash;
+
+  void (async () => {
+    const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
+    try {
+      const receipt = await provider.waitForTransaction(txHash, ONCHAIN_CONFIRMATIONS, ONCHAIN_CONFIRM_TIMEOUT_MS);
+      if (!receipt) {
+        const timeoutErr = new Error("onchain_confirmation_timeout");
+        timeoutErr.code = 504;
+        throw timeoutErr;
+      }
+      if (Number(receipt.status) !== 1) {
+        const revertedErr = new Error("onchain_tx_reverted");
+        revertedErr.code = 502;
+        throw revertedErr;
+      }
+
+      const confirmedAt = new Date().toISOString();
+      if (operationId) {
+        updateOnchainOperation(operationId, "confirmed", {
+          txHash,
+          explorerUrl,
+          executionMode: "ONCHAIN_REAL",
+          note: "Transaction confirmed"
+        });
+      }
+
+      const tx = db.onchainTxs.get(txHash);
+      if (tx) {
+        tx.status = "confirmed";
+        tx.confirmedAt = confirmedAt;
+        tx.blockNumber = receipt.blockNumber || null;
+        tx.explorerUrl = tx.explorerUrl || explorerUrl;
+        tx.error = null;
+      }
+
+      if (userId) {
+        updateUserTradeLifecycle({
+          userId,
+          tradeId,
+          txHash,
+          txStatus: "confirmed",
+          error: null
+        });
+      }
+
+      if (userId) {
+        addNotification(
+          userId,
+          `Onchain trade confirmed: ${String(side || "").toUpperCase()} ${String(token || "").toUpperCase()}`,
+          { channel: "base", type: leaderUserId ? "social" : "wallet" }
+        );
+      }
+    } catch (err) {
+      const reason = String(err?.message || "onchain_tx_failed");
+      if (operationId) {
+        updateOnchainOperation(operationId, "failed", {
+          txHash,
+          explorerUrl,
+          executionMode: "ONCHAIN_REAL",
+          error: reason,
+          note: "Transaction confirmation failed"
+        });
+      }
+
+      const tx = db.onchainTxs.get(txHash);
+      if (tx) {
+        tx.status = "failed";
+        tx.error = reason;
+        tx.confirmedAt = null;
+        tx.blockNumber = null;
+        tx.explorerUrl = tx.explorerUrl || explorerUrl;
+      }
+
+      if (userId) {
+        updateUserTradeLifecycle({
+          userId,
+          tradeId,
+          txHash,
+          txStatus: "failed",
+          error: reason
+        });
+      }
+
+      if (userId) {
+        addNotification(
+          userId,
+          `Onchain trade failed: ${String(side || "").toUpperCase()} ${String(token || "").toUpperCase()}`,
+          { channel: "base", type: leaderUserId ? "social" : "wallet" }
+        );
+      }
+    }
+  })();
 }
 
 function getPosition(user, token) {
@@ -902,35 +1023,19 @@ async function sendTradeExecutorTx({ user, token, side, amountUsdc, tokenAmount,
       });
     }
 
-    const receipt = await sent.wait(1);
-    if (!receipt || receipt.status !== 1) {
-      const err = new Error("onchain_tx_failed");
-      err.code = 502;
-      throw err;
-    }
-
     const tx = {
       chainId: 8453,
       network: "base",
       token: resolved.symbol,
-      status: "confirmed",
+      status: "submitted",
       txHash: sent.hash,
       explorerUrl: "https://basescan.org/tx/" + sent.hash,
-      confirmedAt: new Date().toISOString(),
-      blockNumber: receipt.blockNumber,
+      confirmedAt: null,
+      blockNumber: null,
       quote,
       builderCode: BUILDER_CODE || null,
       builderSuffixApplied: !!BUILDER_DATA_SUFFIX
     };
-
-    if (operationId) {
-      updateOnchainOperation(operationId, "confirmed", {
-        txHash: tx.txHash,
-        explorerUrl: tx.explorerUrl,
-        executionMode: "ONCHAIN_REAL",
-        note: "Transaction confirmed"
-      });
-    }
 
     return {
       tx,
@@ -1598,7 +1703,20 @@ const server = createServer(async (req, res) => {
         copyFrom: null
       });
 
-      addNotification(userId, `Onchain trade confirmed: ${String(side).toUpperCase()} ${String(token).toUpperCase()}`, {
+      if (onchainExec.mode === "ONCHAIN_REAL" && String(tx?.status || "").toLowerCase() === "submitted") {
+        scheduleOnchainConfirmation({
+          txHash: tx.txHash,
+          operationId: txLifecycle?.operationId || operation.operationId,
+          userId,
+          tradeId: out.trade.id,
+          token: tx.token || token,
+          side: resolvedInputs.side
+        });
+      }
+
+      const immediateStatus = String(txLifecycle?.status || tx?.status || "").toLowerCase();
+      const immediateLabel = immediateStatus === "failed" ? "failed" : immediateStatus === "confirmed" ? "confirmed" : "submitted";
+      addNotification(userId, `Onchain trade ${immediateLabel}: ${String(resolvedInputs.side).toUpperCase()} ${String(tx.token || token).toUpperCase()}`, {
         channel: "base",
         type: "wallet"
       });
@@ -1715,7 +1833,21 @@ const server = createServer(async (req, res) => {
         copyFrom: leaderUserId
       });
 
-      addNotification(followerUserId, `Copy trade executed from @${leaderUserId}`, { channel: "farcaster", type: "social" });
+      if (onchainExec.mode === "ONCHAIN_REAL" && String(tx?.status || "").toLowerCase() === "submitted") {
+        scheduleOnchainConfirmation({
+          txHash: tx.txHash,
+          operationId: txLifecycle?.operationId || operation.operationId,
+          userId: followerUserId,
+          tradeId: out.trade.id,
+          token: tx.token || token,
+          side: normalizedSide,
+          leaderUserId
+        });
+      }
+
+      const copyImmediateStatus = String(txLifecycle?.status || tx?.status || "").toLowerCase();
+      const copyImmediateLabel = copyImmediateStatus === "failed" ? "failed" : copyImmediateStatus === "confirmed" ? "confirmed" : "submitted";
+      addNotification(followerUserId, `Copy trade ${copyImmediateLabel} from @${leaderUserId}`, { channel: "farcaster", type: "social" });
 
       const payload = {
         followerUserId,
@@ -1894,6 +2026,7 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 export { server, db, getOrCreateUser };
+
 
 
 

@@ -331,6 +331,13 @@ function money(n) {
 }
 
 function tokenFromText(text) {
+function formatAuthExpiry(exp) {
+  const v = Number(exp || 0);
+  if (!v) return "-";
+  const d = new Date(v * 1000);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString();
+}
   const match = String(text || "").toUpperCase().match(/\b[A-Z]{2,10}\b/);
   return match ? match[0] : "NOTE";
 }
@@ -562,6 +569,7 @@ export default function App() {
   const [autoConnectTried, setAutoConnectTried] = useState(false);
   const [connectHint, setConnectHint] = useState("");
   const [authVerified, setAuthVerified] = useState(false);
+  const [authExpiresAt, setAuthExpiresAt] = useState(null);
   const [miniContext, setMiniContext] = useState(null);
   const [manifestStatus, setManifestStatus] = useState(null);
   const [notificationState, setNotificationState] = useState({
@@ -612,7 +620,8 @@ export default function App() {
     const following = 42;
     const copiers = premium.active ? 9 : 0;
     return { followers, following, copiers };
-  }, [feed.length, premium.active]);
+  }, [feed.length, premium.active]);
+
   useEffect(() => {
     async function loadDirectory() {
       try {
@@ -628,7 +637,8 @@ export default function App() {
       }
     }
     loadDirectory();
-  }, [globalTokenQuery, selectedTokenSymbol]);
+  }, [globalTokenQuery, selectedTokenSymbol]);
+
   useEffect(() => {
     if (!selectedTokenProfile?.symbol) return;
     async function loadInsights() {
@@ -647,7 +657,8 @@ export default function App() {
       }
     }
     loadInsights();
-  }, [selectedTokenProfile?.symbol]);
+  }, [selectedTokenProfile?.symbol]);
+
   useEffect(() => {
     let mounted = true;
     sdk
@@ -663,7 +674,8 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function loadMiniContext() {
@@ -682,7 +694,8 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isInMiniAppContext]);
+  }, [isInMiniAppContext]);
+
   useEffect(() => {
     let cancelled = false;
     async function loadManifestStatus() {
@@ -697,7 +710,8 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, []);
+
   useEffect(() => {
     function onEnabled({ notificationDetails }) {
       setNotificationState({
@@ -746,7 +760,8 @@ export default function App() {
       sdk.off("miniAppAdded", onAdded);
       sdk.off("miniAppAddRejected", onRejected);
     };
-  }, []);
+  }, []);
+
   useEffect(() => {
     async function loadOnchainConfig() {
       try {
@@ -757,7 +772,8 @@ export default function App() {
       }
     }
     loadOnchainConfig();
-  }, [connected]);
+  }, [connected]);
+
   useEffect(() => {
     async function loadCopySettings() {
       if (!connected || !userId) return;
@@ -769,7 +785,8 @@ export default function App() {
       }
     }
     loadCopySettings();
-  }, [connected, userId]);
+  }, [connected, userId]);
+
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
@@ -780,7 +797,8 @@ export default function App() {
     } catch {
       // ignore localStorage failures in embedded browsers
     }
-  }, [activeToken, buyAmount, customSell, copySettings]);
+  }, [activeToken, buyAmount, customSell, copySettings]);
+
   useEffect(() => {
     if (!activeToken || Number(buyAmount || 0) <= 0) {
       setQuote(null);
@@ -940,6 +958,7 @@ export default function App() {
       if (status?.authVerified) {
         if (status.userId) setUserId(status.userId);
         setAuthVerified(true);
+        setAuthExpiresAt(status.quickAuthExp || null);
         return true;
       }
     } catch {
@@ -953,6 +972,7 @@ export default function App() {
     const out = await loginWithFarcasterAuth(identity, userId, { force: true, strict: true });
     setUserId(out.session.userId);
     setAuthVerified(!!out.session.authVerified);
+    setAuthExpiresAt(out?.user?.auth?.quickAuthExp || null);
     return !!out.session.authVerified;
   }
 
@@ -986,6 +1006,7 @@ export default function App() {
       setConnectHint(identity.address ? `Connected wallet: ${identity.address} (no onchain tx)` : "Connected in mini app (no onchain tx)");
       setUserId(login.session.userId);
       setAuthVerified(!!login?.session?.authVerified);
+      setAuthExpiresAt(login?.user?.auth?.quickAuthExp || null);
       setConnected(true);
       setAutoConnectTried(true);
       await refreshSummary(login.session.userId);
@@ -995,7 +1016,8 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }
+  }
+
   useEffect(() => {
     if (!isInMiniAppContext || connected || loading || autoConnectTried) return;
 
@@ -1011,6 +1033,7 @@ export default function App() {
         if (cancelled) return;
         setUserId(login.session.userId);
         setAuthVerified(!!login?.session?.authVerified);
+        setAuthExpiresAt(login?.user?.auth?.quickAuthExp || null);
         setConnected(true);
         setConnectHint(identity.address ? `Wallet: ${identity.address}` : "Connected in mini app");
         await refreshSummary(login.session.userId);
@@ -1405,6 +1428,7 @@ export default function App() {
                   {authVerified ? "Refresh Auth" : "Verify Auth"}
                 </Button>
               </div>
+              <p className="mt-2 text-[11px] text-muted-foreground">Auth expires: {formatAuthExpiry(authExpiresAt)}</p>
             </div>
           </div>
 
@@ -1977,6 +2001,11 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
 
 
 

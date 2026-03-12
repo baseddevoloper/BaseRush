@@ -881,7 +881,7 @@ export default function App() {
     if (sessionPromptedRef.current) return;
     sessionPromptedRef.current = true;
     try {
-      const nonce = `baserush_${Date.now()}`;
+      const nonce = `baserush${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       await withTimeout(() => sdk.actions.signIn({ nonce }), 8000, "actions.signIn");
     } catch (err) {
       sessionPromptedRef.current = false;

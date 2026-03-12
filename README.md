@@ -5,7 +5,7 @@ Mobil-first, FOMO-benzeri sosyal trader arena prototipi.
 Slogan: **Trade Fast. Move First.**
 
 ## Ozellikler
-- Farcaster veya Base ile tek giris
+- Mini app acilisinda otomatik wallet + signature session
 - Ana akis: kim ne alip satiyor, canli PnL kartlari
 - Cuzdanim: USDC bakiye, depozito, acik pozisyonlar
 - Takip ettiklerim + bildirim merkezi
@@ -157,3 +157,10 @@ Native moda donmek icin:
 
 Kontrol:
 - `GET /api/miniapp/manifest-status` -> `notificationMode`, `webhookUrl`
+
+## Wallet Session (Auto)
+- Manuel Connect Wallet butonu yoktur.
+- Uygulama acilisinda mini app context icinde otomatik olarak:
+  - Signature izni istenir (Farcaster sign-in/quick auth)
+  - Wallet baglantisi istenir (Base chain)
+- Baglanti tamamlanmadan uygulama icerigi kilitli kalir ve otomatik retry yapar.

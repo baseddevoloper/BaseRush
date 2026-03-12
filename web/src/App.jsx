@@ -952,7 +952,12 @@ export default function App() {
         setConnectHint(identity.address ? `Wallet: ${identity.address}` : "Connected in mini app");
         await refreshSummary(login.session.userId);
       } catch (err) {
-        if (!cancelled) setConnectHint(`Auto connect failed: ${err.message}`);
+        if (!cancelled) {
+          setConnectHint(`Auto connect failed: ${err.message}`);
+          setTimeout(() => {
+            if (!cancelled) setAutoConnectTried(false);
+          }, 2500);
+        }
       } finally {
         if (!cancelled) {
           setAutoConnectTried(true);
@@ -1290,19 +1295,12 @@ export default function App() {
               <span className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-emerald-400" : "bg-zinc-500"}`} />
             </div>
 
-            <Button
-              onClick={handleConnect}
-              disabled={loading}
-              className="mt-3 h-11 w-full rounded-xl bg-primary text-primary-foreground shadow-[0_0_32px_-14px_hsl(var(--primary))] transition-all hover:brightness-110"
-            >
-              {loading ? "Connecting wallet..." : connected ? "Wallet Connected" : "Connect Wallet"}
-            </Button>
-
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <Button variant="outline" onClick={() => refreshSummary()} disabled={!connected || loading}>
-                <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-              </Button>
-              <Button variant="outline" onClick={handleGrantSignature} disabled={loading}>Grant Signature</Button>
+            <div className="mt-3 rounded-xl border border-white/10 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              {connected
+                ? "Wallet connected. App unlocked."
+                : loading
+                  ? "Auto-connecting wallet and requesting signature..."
+                  : "Waiting for mini app wallet session..."}
             </div>
           </div>
 
@@ -1318,7 +1316,22 @@ export default function App() {
         </CardContent>
       </Card>
 
-      {activeTab === "home" && (
+      {!connected && (
+        <Card className="mb-4 rounded-2xl border-white/10 bg-card/80">
+          <CardHeader>
+            <CardTitle className="text-base">Connecting Your Wallet</CardTitle>
+            <CardDescription>
+              BaseRush opens after wallet and signature session is approved in Farcaster or Base app.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            <p>Mini app context: {isInMiniAppContext ? "Detected" : "Not detected yet"}</p>
+            <p>Status: {loading ? "Connecting..." : "Retrying automatically..."}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {connected && activeTab === "home" && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Card className="rounded-2xl border-white/10">
@@ -1554,7 +1567,7 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === "friends" && (
+      {connected && activeTab === "friends" && (
         <Card className="rounded-2xl border-white/10">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2"><Users className="h-4 w-4" /> Friends</CardTitle>
@@ -1573,7 +1586,7 @@ export default function App() {
         </Card>
       )}
 
-      {activeTab === "feed" && (
+      {connected && activeTab === "feed" && (
         <Card className="rounded-2xl border-white/10">
           <CardHeader>
             <CardTitle className="text-base">Feed</CardTitle>
@@ -1587,7 +1600,7 @@ export default function App() {
         </Card>
       )}
 
-      {activeTab === "referrals" && (
+      {connected && activeTab === "referrals" && (
         <Card className="rounded-2xl border-white/10">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2"><Gift className="h-4 w-4" /> Referrals</CardTitle>
@@ -1615,7 +1628,7 @@ export default function App() {
         </Card>
       )}
 
-      {activeTab === "profile" && (
+      {connected && activeTab === "profile" && (
         <div className="space-y-3">
           <ProfileHero
             handle={profileHandle}

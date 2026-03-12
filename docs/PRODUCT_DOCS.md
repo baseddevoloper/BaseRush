@@ -1,4 +1,4 @@
-﻿# Base/Farcaster Trader Social Mini App - Product & Delivery Blueprint
+# Base/Farcaster Trader Social Mini App - Product & Delivery Blueprint
 
 Last update: 2026-03-11  
 Owner: Product + Engineering  
@@ -58,6 +58,15 @@ Base aginda, Farcaster sosyal etkisini ve trader davranisini birlestiren, mobil-
   - Token note yazip feed'e gonderme
 
 ### 2.2 Bilinen MVP Sinirlari
+### 2.3 Auto Wallet Session (Current)
+- Mini app acildiginda manuel connect butonu olmadan otomatik session baslatilir.
+- Akis:
+  1. Signature/session izni (Farcaster sign-in + quick auth)
+  2. Wallet connect (Base, chainId 8453)
+  3. Login ve app unlock
+- Wallet + signature tamamlanmadan ana ekran islemleri kilitli tutulur.
+- Basarisiz denemelerde sistem otomatik retry yapar.
+
 - Cuzdan custody mock
 - Onchain trade yok (server-side simule)
 - Gercek fiyat/likidite quote yok

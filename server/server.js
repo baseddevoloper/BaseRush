@@ -1159,10 +1159,6 @@ function enforceUserQuickAuthBinding(userId, authResult) {
   return user;
 }
 
-function isWalletSessionUser(userId) {
-  const user = db.users.get(String(userId || ""));
-  return !!(user?.auth?.provider === "base" && user?.auth?.address);
-}
 
 function findUserIdByFid(fid) {
   const target = Number(fid || 0) || 0;
@@ -1175,15 +1171,8 @@ function findUserIdByFid(fid) {
 
 async function enforceRequestAuth(req, userId) {
   if (!FC_AUTH_REQUIRED) return;
-  try {
-    const auth = await requireQuickAuth(req);
-    enforceUserQuickAuthBinding(userId, auth);
-  } catch (err) {
-    if (String(err?.message || "") === "missing_auth_bearer" && isWalletSessionUser(userId)) {
-      return;
-    }
-    throw err;
-  }
+  const auth = await requireQuickAuth(req);
+  enforceUserQuickAuthBinding(userId, auth);
 }
 
 function getAuthDebugSnapshot() {

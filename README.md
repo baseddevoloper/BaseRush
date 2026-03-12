@@ -37,8 +37,8 @@ npm test
 ```
 
 ## Notlar
-- Bu MVP bir prototiptir; onchain cagrilar ve custody guvenligi mock edilmiï¿½tir.
-- Uretimde HSM, key management, AML/KYC ve regï¿½lasyon uyumlulugu eklenmelidir.
+- Bu MVP bir prototiptir; onchain cagrilar ve custody guvenligi mock edilmiÃƒÂ¯Ã‚Â¿Ã‚Â½tir.
+- Uretimde HSM, key management, AML/KYC ve regÃƒÂ¯Ã‚Â¿Ã‚Â½lasyon uyumlulugu eklenmelidir.
 ## Real Onchain Mod (Base RPC + TradeExecutor)
 Sunucu varsayilan olarak `ONCHAIN_MOCK` modunda calisir.
 Gercek zincir islemi icin su env degiskenlerini ayarla:
@@ -134,12 +134,11 @@ Kontrol:
   - `RATE_LIMIT_TRADE_MAX=30`
 - JSON body limit:
   - `BODY_MAX_BYTES=262144`
-- Farcaster webhook imza dogrulama (onerilen):
-  - `FC_WEBHOOK_SECRET=...`
-  - `FC_WEBHOOK_SIG_HEADER=x-farcaster-signature`
-  - `FC_WEBHOOK_TS_HEADER=x-farcaster-timestamp`
-  - `FC_WEBHOOK_MAX_SKEW_MS=300000`
+- Farcaster webhook dogrulama (canli format, resmi SDK):
+  - `FC_WEBHOOK_REQUIRE_VERIFY=true`
+  - `NEYNAR_API_KEY=...`
   - Endpoint: `POST /api/farcaster/webhook`
+  - Sunucu `@farcaster/miniapp-node` ile `parseWebhookEvent(...)` kullanir (JFS body: `header/payload/signature`).
 - Production signer guard:
   - Varsayilan: `ALLOW_LOCAL_SIGNER_IN_PROD=false`
   - Bu durumda prod'da local private key signer ile onchain endpointler `503 local_signer_blocked_in_production` doner.

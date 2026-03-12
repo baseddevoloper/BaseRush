@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
-import crypto from "node:crypto";
+import { parseWebhookEvent, verifyAppKeyWithNeynar } from "@farcaster/miniapp-node";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,10 +104,7 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 120);
 const RATE_LIMIT_TRADE_MAX = Number(process.env.RATE_LIMIT_TRADE_MAX || 30);
 const BODY_MAX_BYTES = Number(process.env.BODY_MAX_BYTES || 256 * 1024);
-const FC_WEBHOOK_SECRET = process.env.FC_WEBHOOK_SECRET || "";
-const FC_WEBHOOK_SIG_HEADER = (process.env.FC_WEBHOOK_SIG_HEADER || "x-farcaster-signature").toLowerCase();
-const FC_WEBHOOK_TS_HEADER = (process.env.FC_WEBHOOK_TS_HEADER || "x-farcaster-timestamp").toLowerCase();
-const FC_WEBHOOK_MAX_SKEW_MS = Number(process.env.FC_WEBHOOK_MAX_SKEW_MS || 5 * 60 * 1000);
+const FC_WEBHOOK_REQUIRE_VERIFY = process.env.NODE_ENV === "test" ? false : String(process.env.FC_WEBHOOK_REQUIRE_VERIFY || "true") === "true";
 const ALLOW_LOCAL_SIGNER_IN_PROD = String(process.env.ALLOW_LOCAL_SIGNER_IN_PROD || "false") === "true";
 
 function normalizePlainText(value, maxLen) {
@@ -844,43 +841,49 @@ function isLocalSignerAllowed() {
   return ALLOW_LOCAL_SIGNER_IN_PROD;
 }
 
-function getHeader(req, name) {
-  const v = req.headers[name];
-  if (Array.isArray(v)) return v[0] || "";
-  return String(v || "");
-}
-
-function verifyFarcasterWebhook(req, rawBody) {
-  if (!FC_WEBHOOK_SECRET) return { ok: true, skipped: true };
-
-  const sig = getHeader(req, FC_WEBHOOK_SIG_HEADER).replace(/^sha256=/, "").trim();
-  const ts = getHeader(req, FC_WEBHOOK_TS_HEADER).trim();
-  if (!sig || !ts) return { ok: false, code: 401, error: "missing_webhook_signature" };
-
-  const tsNum = Number(ts);
-  if (!Number.isFinite(tsNum)) return { ok: false, code: 401, error: "invalid_webhook_timestamp" };
-
-  const now = Date.now();
-  if (Math.abs(now - tsNum) > FC_WEBHOOK_MAX_SKEW_MS) return { ok: false, code: 401, error: "stale_webhook_timestamp" };
-
-  const replayKey = ts + ":" + sig;
-  if (db.webhookReplay.has(replayKey)) return { ok: false, code: 409, error: "replayed_webhook" };
-
-  const payload = ts + "." + rawBody;
-  const expected = crypto.createHmac("sha256", FC_WEBHOOK_SECRET).update(payload).digest("hex");
-  const sigBuf = Buffer.from(sig, "hex");
-  const expBuf = Buffer.from(expected, "hex");
-  if (!sigBuf.length || sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-    return { ok: false, code: 401, error: "invalid_webhook_signature" };
+async function parseVerifiedWebhookEvent(raw) {
+  let payload = {};
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    const err = new Error("invalid_json");
+    err.status = 400;
+    throw err;
   }
 
-  db.webhookReplay.set(replayKey, now);
-  const cutoff = now - FC_WEBHOOK_MAX_SKEW_MS * 2;
-  for (const [k, t] of db.webhookReplay.entries()) {
-    if (t < cutoff) db.webhookReplay.delete(k);
+  if (!FC_WEBHOOK_REQUIRE_VERIFY) {
+    return {
+      verified: false,
+      eventType: payload?.event || payload?.type || null,
+      fid: null,
+      appFid: null,
+      event: payload
+    };
   }
 
-  return { ok: true, skipped: false };
+  try {
+    const parsed = await parseWebhookEvent(payload, verifyAppKeyWithNeynar);
+    return {
+      verified: true,
+      eventType: parsed?.event?.event || null,
+      fid: parsed?.fid || null,
+      appFid: parsed?.appFid || null,
+      event: parsed?.event || null
+    };
+  } catch (error) {
+    const msg = String(error?.message || "invalid_webhook_signature");
+    const lower = msg.toLowerCase();
+
+    if (lower.includes("neynar_api_key") || lower.includes("needs to be set")) {
+      const err = new Error("webhook_verifier_not_configured");
+      err.status = 503;
+      throw err;
+    }
+
+    const err = new Error("invalid_webhook_signature");
+    err.status = 401;
+    throw err;
+  }
 }
 
 async function serveStatic(file, res) {
@@ -918,15 +921,14 @@ const server = createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/farcaster/webhook") {
     try {
       const raw = await readRawBody(req);
-      const verified = verifyFarcasterWebhook(req, raw);
-      if (!verified.ok) return json(res, verified.code || 401, { ok: false, error: verified.error });
-
-      const event = raw ? JSON.parse(raw) : {};
+      const parsed = await parseVerifiedWebhookEvent(raw);
       return json(res, 200, {
         ok: true,
         received: true,
-        verified: !verified.skipped,
-        eventType: event?.type || null
+        verified: parsed.verified,
+        eventType: parsed.eventType,
+        fid: parsed.fid,
+        appFid: parsed.appFid
       });
     } catch (err) {
       return json(res, httpStatusFromError(err), { ok: false, error: err.message || "webhook_failed" });

@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 
 const port = 3010;
 const base = `http://localhost:${port}`;
@@ -45,6 +45,13 @@ async function run() {
     assert.equal(login.res.status, 200);
     assert.equal(login.body.session.provider, "farcaster");
     assert.equal(login.body.user.auth.fid, 123);
+
+    const webhook = await post("/api/farcaster/webhook", {
+      event: "miniapp_added",
+      notificationDetails: { token: "test_token", url: "https://baserush.app/api/notify" }
+    });
+    assert.equal(webhook.res.status, 200);
+    assert.equal(webhook.body.verified, false);
 
     await post("/api/balance/deposit-usdc", { userId: "u1", amount: 100 });
 

@@ -16,6 +16,7 @@
     "contract:deploy:base-sepolia": "hardhat run scripts/deploy-trade-executor.cjs --network baseSepolia"
   },
   "dependencies": {
+    "@farcaster/miniapp-node": "^0.1.13",
     "@farcaster/miniapp-sdk": "^0.2.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

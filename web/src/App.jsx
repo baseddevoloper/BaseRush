@@ -565,10 +565,12 @@ export default function App() {
     sdk
       .isInMiniApp()
       .then((ok) => {
-        if (mounted) setIsInMiniAppContext(!!ok);
+        const fallback = typeof window !== "undefined" && !!(window.miniapp?.sdk || window.farcaster);
+        if (mounted) setIsInMiniAppContext(!!ok || fallback);
       })
       .catch(() => {
-        if (mounted) setIsInMiniAppContext(false);
+        const fallback = typeof window !== "undefined" && !!(window.miniapp?.sdk || window.farcaster);
+        if (mounted) setIsInMiniAppContext(!!fallback);
       });
     return () => {
       mounted = false;
@@ -765,46 +767,44 @@ export default function App() {
     setLoading(true);
     setConnectHint("Connecting mini app wallet...");
     try {
-      let login;
+      const liveInMini = await withTimeout(() => sdk.isInMiniApp(), 1600, "isInMiniApp")
+        .catch(() => typeof window !== "undefined" && !!(window.miniapp?.sdk || window.farcaster));
+      setIsInMiniAppContext(!!liveInMini);
+      if (!liveInMini) throw new Error("open_in_farcaster_or_base_app");
 
-      if (isInMiniAppContext) {
-        const identity = await resolveMiniAppIdentity({ interactive: true });
-        setConnectHint("Requesting Farcaster auth...");
-        const qa = await withTimeout(() => sdk.quickAuth.getToken(), 7000, "quickAuth.getToken");
-        const authToken = qa?.token || "";
-        if (!authToken) throw new Error("quick_auth_token_missing");
+      const identity = await resolveMiniAppIdentity({ interactive: true });
+      setConnectHint("Requesting Farcaster auth...");
+      const qa = await withTimeout(() => sdk.quickAuth.getToken(), 7000, "quickAuth.getToken");
+      const authToken = qa?.token || "";
+      if (!authToken) throw new Error("quick_auth_token_missing");
 
-        try {
-          if (typeof window !== "undefined") window.localStorage.setItem(LS_KEYS.quickAuthToken, authToken);
-        } catch {
-          // ignore storage failures in embedded browser
-        }
-
-        setConnectHint("Authorizing session...");
-        const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
-        login = await apiPost(
-          "/api/auth/login",
-          {
-            provider: "farcaster",
-            userId: resolvedUserId,
-            fid: identity.fid,
-            username: identity.username || "you",
-            address: identity.address
-          },
-          { authToken }
-        );
-        setConnectHint(identity.address ? `Connected: ${identity.address}` : "Connected via Farcaster context");
-      } else {
-        const resolvedUserId = userId.trim() || `arena_${Date.now()}`;
-        login = await apiPost("/api/auth/login", { provider: "base", userId: resolvedUserId, username: "you" });
-        setConnectHint("Connected in browser mode (not Mini App)");
+      try {
+        if (typeof window !== "undefined") window.localStorage.setItem(LS_KEYS.quickAuthToken, authToken);
+      } catch {
+        // ignore storage failures in embedded browser
       }
+
+      setConnectHint("Authorizing session...");
+      const resolvedUserId = userId.trim() || (identity.fid ? `fc_${identity.fid}` : `arena_${Date.now()}`);
+      const login = await apiPost(
+        "/api/auth/login",
+        {
+          provider: "farcaster",
+          userId: resolvedUserId,
+          fid: identity.fid,
+          username: identity.username || "you",
+          address: identity.address
+        },
+        { authToken }
+      );
+      setConnectHint(identity.address ? `Connected: ${identity.address}` : "Connected via Farcaster context");
 
       setUserId(login.session.userId);
       setConnected(true);
       setAutoConnectTried(true);
       await refreshSummary(login.session.userId);
     } catch (err) {
+      setConnected(false);
       setConnectHint(`Connect failed: ${err.message}`);
     } finally {
       setLoading(false);
@@ -1186,7 +1186,7 @@ export default function App() {
               <RefreshCw className="mr-2 h-4 w-4" /> Refresh
             </Button>
           </div>
-          {connectHint && <p className="text-xs text-muted-foreground">{connectHint}</p>}
+          {connectHint && <p className="text-xs text-muted-foreground">{connectHint.replace("open_in_farcaster_or_base_app", "Open this mini app inside Farcaster/Base app")}</p>}
         </CardContent>
       </Card>
 

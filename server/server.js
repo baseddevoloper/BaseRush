@@ -52,6 +52,7 @@ const TOKEN_MARKET_DATA = {
 const ENABLE_REAL_ONCHAIN = process.env.NODE_ENV === "test" ? false : process.env.ENABLE_REAL_ONCHAIN === "true";
 const BASE_RPC_URL = process.env.BASE_RPC_URL || "";
 const TRADE_EXECUTOR_ADDRESS = process.env.TRADE_EXECUTOR_ADDRESS || "";
+const USER_TRADE_ROUTER_ADDRESS = process.env.USER_TRADE_ROUTER_ADDRESS || "";
 const SERVER_SIGNER_PRIVATE_KEY = process.env.SERVER_SIGNER_PRIVATE_KEY || "";
 const TRADE_EXECUTOR_FUNCTION = process.env.TRADE_EXECUTOR_FUNCTION || "executeTrade";
 const USDC_BASE_ADDRESS = (process.env.USDC_BASE_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").trim();
@@ -2227,6 +2228,8 @@ const server = createServer(async (req, res) => {
         signerStrategy: SERVER_SIGNER_PRIVATE_KEY ? "local_private_key" : "none",
         localSignerAllowed: isLocalSignerAllowed(),
         executorAddress: TRADE_EXECUTOR_ADDRESS || null,
+        userRouterAddress: USER_TRADE_ROUTER_ADDRESS || null,
+        userRouterConfigured: !!USER_TRADE_ROUTER_ADDRESS,
         functionName: TRADE_EXECUTOR_FUNCTION,
         abiEntries: TRADE_EXECUTOR_ABI.length,
         argsTemplate: TRADE_EXECUTOR_ARGS_TEMPLATE,
@@ -2363,6 +2366,10 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 export { server, db, getOrCreateUser };
+
+
+
+
 
 
 

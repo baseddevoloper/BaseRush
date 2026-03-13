@@ -55,6 +55,9 @@ function readLocalJSON(key, fallback) {
 
 const TOKENS = ["ETH", "AERO", "DEGEN", "BRETT", "USDC"];
 const USDC_TRANSFER_ABI = [{ type: "function", name: "transfer", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ name: "", type: "bool" }] }];
+const ERC20_APPROVE_ABI = [{ type: "function", name: "approve", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ name: "", type: "bool" }] }];
+const USER_TRADE_ROUTER_ABI = [{ type: "function", name: "swapUserTokens", stateMutability: "nonpayable", inputs: [{ name: "tokenIn", type: "address" }, { name: "tokenOut", type: "address" }, { name: "amountIn", type: "uint256" }, { name: "minOut", type: "uint256" }, { name: "recipient", type: "address" }], outputs: [{ name: "amountOutAfterFee", type: "uint256" }] }];
+const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const POPULAR_TOKENS = [
   { symbol: "ETH", contract: "0x4200000000000000000000000000000000000006", verified: true },
   { symbol: "USDC", contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", verified: true },
@@ -1268,6 +1271,101 @@ export default function App() {
     }
   }
 
+
+  function findTokenProfile(symbol) {
+    const s = String(symbol || "").toUpperCase();
+    return tokenDirectory.find((t) => String(t.symbol || "").toUpperCase() === s) || TOKEN_DIRECTORY.find((t) => String(t.symbol || "").toUpperCase() === s) || null;
+  }
+
+  function tokenDecimalsFor(symbol) {
+    return String(symbol || "").toUpperCase() === "USDC" ? 6 : 18;
+  }
+
+  async function waitForTxReceipt(provider, txHash, timeoutMs = 90000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const receipt = await provider.request({ method: "eth_getTransactionReceipt", params: [txHash] });
+      if (receipt && receipt.blockNumber) return receipt;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    throw new Error("tx_receipt_timeout");
+  }
+
+  async function runWalletDirectTrade({ side, amountUsdc = 0, tokenAmount = 0 }) {
+    const provider = sdk?.wallet?.ethProvider || (typeof window !== "undefined" ? window?.miniapp?.sdk?.wallet?.ethProvider : null);
+    if (!provider?.request) throw new Error("wallet_provider_unavailable");
+
+    const signerAddress = String(wagmiAddress || "");
+    if (!signerAddress) throw new Error("wallet_not_connected");
+
+    const token = findTokenProfile(activeToken);
+    if (!token?.contract) throw new Error("token_contract_missing");
+
+    const routerAddress = String(onchainConfig?.userRouterAddress || "").trim();
+    if (!routerAddress) throw new Error("user_router_not_configured");
+
+    const normalizedSide = String(side || "BUY").toUpperCase();
+    const slippageBps = Math.max(10, Math.min(2000, Number(copySettings?.slippageBps || 100)));
+
+    let tokenIn;
+    let tokenOut;
+    let amountInRaw;
+    let minOutRaw = 0n;
+
+    if (normalizedSide === "BUY") {
+      if (String(activeToken).toUpperCase() === "USDC") throw new Error("cannot_buy_usdc_pair");
+      const usdc = String(onchainConfig?.usdcDeposit?.tokenAddress || USDC_BASE_ADDRESS);
+      tokenIn = usdc;
+      tokenOut = token.contract;
+
+      const quoteOut = await apiGet(`/api/trade/quote?token=${encodeURIComponent(activeToken)}&side=BUY&amountUsdc=${encodeURIComponent(amountUsdc)}&userId=${encodeURIComponent(userId || "guest")}&slippageBps=${encodeURIComponent(slippageBps)}`);
+      const outToken = Number(quoteOut?.quote?.outTokenAmount || 0);
+      const minOutToken = outToken * (1 - slippageBps / 10000);
+
+      amountInRaw = parseUnits(String(Number(amountUsdc || 0).toFixed(6)), 6);
+      minOutRaw = minOutToken > 0 ? parseUnits(String(minOutToken.toFixed(6)), tokenDecimalsFor(activeToken)) : 0n;
+    } else {
+      const tokenQty = Number(tokenAmount || 0);
+      if (!(tokenQty > 0)) throw new Error("invalid_sell_amount");
+
+      const usdc = String(onchainConfig?.usdcDeposit?.tokenAddress || USDC_BASE_ADDRESS);
+      tokenIn = token.contract;
+      tokenOut = usdc;
+
+      const quoteOut = await apiGet(`/api/trade/quote?token=${encodeURIComponent(activeToken)}&side=SELL&tokenAmount=${encodeURIComponent(tokenQty)}&userId=${encodeURIComponent(userId || "guest")}&slippageBps=${encodeURIComponent(slippageBps)}`);
+      const outUsdc = Number(quoteOut?.quote?.outUsdc || 0);
+      const minOutUsdc = outUsdc * (1 - slippageBps / 10000);
+
+      amountInRaw = parseUnits(String(tokenQty.toFixed(6)), tokenDecimalsFor(activeToken));
+      minOutRaw = minOutUsdc > 0 ? parseUnits(String(minOutUsdc.toFixed(6)), 6) : 0n;
+    }
+
+    const approveData = encodeFunctionData({
+      abi: ERC20_APPROVE_ABI,
+      functionName: "approve",
+      args: [routerAddress, amountInRaw]
+    });
+
+    const approveTx = await provider.request({
+      method: "eth_sendTransaction",
+      params: [{ from: signerAddress, to: tokenIn, data: approveData, value: "0x0" }]
+    });
+    await waitForTxReceipt(provider, approveTx, 90000);
+
+    const swapData = encodeFunctionData({
+      abi: USER_TRADE_ROUTER_ABI,
+      functionName: "swapUserTokens",
+      args: [tokenIn, tokenOut, amountInRaw, minOutRaw, signerAddress]
+    });
+
+    const swapTx = await provider.request({
+      method: "eth_sendTransaction",
+      params: [{ from: signerAddress, to: routerAddress, data: swapData, value: "0x0" }]
+    });
+
+    await waitForTxReceipt(provider, swapTx, 120000);
+    return { approveTx, swapTx };
+  }
   async function handlePremium() {
     if (!userId) return;
     setLoading(true);
@@ -1280,32 +1378,38 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleBuyAndNote() {
+  }  async function handleBuyAndNote() {
     if (!userId) return;
     setLoading(true);
     try {
       await requireProtectedAuth();
-      const out = await apiPost("/api/trade/execute-onchain", {
+      const usdcIn = Number(buyAmount || 0);
+      if (!(usdcIn > 0)) throw new Error("invalid_buy_amount");
+
+      const tx = await runWalletDirectTrade({ side: "BUY", amountUsdc: usdcIn });
+
+      const out = await apiPost("/api/trade/execute", {
         userId,
         token: activeToken,
         side: "BUY",
-        amountUsdc: Number(buyAmount || 0),
-        idempotencyKey: `buy_react_${activeToken}_${Date.now()}`
+        amountUsdc: usdcIn,
+        idempotencyKey: `buy_wallet_${activeToken}_${Date.now()}`
       });
 
-      setLastTx(out.tx || null);
-      setLastTxLifecycle(out.txLifecycle || null);
+      setLastTx({ txHash: tx.swapTx, status: "confirmed", explorerUrl: `https://basescan.org/tx/${tx.swapTx}` });
+      setLastTxLifecycle(null);
 
-      setFeed((prev) => [{ id: `f_${Date.now()}`, handle: "@you", text: `bought ${activeToken}`, amount: Number(buyAmount || 0), ts: "now", pnl: 0 }, ...prev].slice(0, 60));
+      setFeed((prev) => [{ id: `f_${Date.now()}`, handle: "@you", text: `bought ${activeToken}`, amount: usdcIn, ts: "now", pnl: 0 }, ...prev].slice(0, 60));
 
       if (note.trim()) {
         setFeed((prev) => [{ id: `n_${Date.now()}`, handle: "@you", text: `note: ${note.trim()}`, amount: 0, ts: "now", pnl: 0 }, ...prev].slice(0, 60));
         setNote("");
       }
 
-      await refreshAppData(userId, feedScope);
+      setConnectHint(`Trade confirmed: ${tx.swapTx.slice(0, 10)}...`);
+      if (out?.balance !== undefined) {
+        await refreshAppData(userId, feedScope);
+      }
     } catch (err) {
       alert(`Buy failed: ${err.message}`);
     } finally {
@@ -1318,12 +1422,14 @@ export default function App() {
     setLoading(true);
     try {
       await requireProtectedAuth();
-      const out = await apiPost("/api/trade/execute-onchain", {
+      const tx = await runWalletDirectTrade({ side: "SELL", tokenAmount: Number(qty) });
+
+      const out = await apiPost("/api/trade/execute", {
         userId,
         token: activeToken,
         side: "SELL",
-        tokenAmount: Number(qty.toFixed(6)),
-        idempotencyKey: `sell_react_${activeToken}_${Date.now()}`
+        tokenAmount: Number(Number(qty).toFixed(6)),
+        idempotencyKey: `sell_wallet_${activeToken}_${Date.now()}`
       });
 
       setFeed((prev) => [{
@@ -1336,8 +1442,9 @@ export default function App() {
       }, ...prev].slice(0, 60));
 
       setCustomSell("");
-      setLastTx(out.tx || null);
-      setLastTxLifecycle(out.txLifecycle || null);
+      setLastTx({ txHash: tx.swapTx, status: "confirmed", explorerUrl: `https://basescan.org/tx/${tx.swapTx}` });
+      setLastTxLifecycle(null);
+      setConnectHint(`Trade confirmed: ${tx.swapTx.slice(0, 10)}...`);
       await refreshAppData(userId, feedScope);
     } catch (err) {
       alert(`Sell failed: ${err.message}`);
@@ -1348,33 +1455,12 @@ export default function App() {
 
   async function handleSellByPct(pct) {
     if (!currentPosition || !userId) return;
-    setLoading(true);
-    try {
-      await requireProtectedAuth();
-      const out = await apiPost("/api/trade/execute-onchain", {
-        userId,
-        token: activeToken,
-        side: "SELL",
-        sellPercent: Number(pct),
-        idempotencyKey: `sell_pct_react_${activeToken}_${pct}_${Date.now()}`,
-        onchain: { slippageBps: Number(copySettings?.slippageBps || 100) }
-      });
-      setFeed((prev) => [{
-        id: `sp_${Date.now()}`,
-        handle: "@you",
-        text: `sold ${pct}% ${activeToken}`,
-        amount: out.trade?.grossUsdc || 0,
-        ts: "now",
-        pnl: out.trade?.realizedPnl || 0
-      }, ...prev].slice(0, 60));
-      setLastTx(out.tx || null);
-      setLastTxLifecycle(out.txLifecycle || null);
-      await refreshAppData(userId, feedScope);
-    } catch (err) {
-      alert(`Sell failed: ${err.message}`);
-    } finally {
-      setLoading(false);
+    const qty = Number(currentPosition.amount || 0) * (Number(pct) / 100);
+    if (!(qty > 0)) {
+      alert("No position amount to sell.");
+      return;
     }
+    await handleSellAmount(Number(qty.toFixed(6)));
   }
 
   async function handleSellCustomPercent() {
@@ -2202,6 +2288,13 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
 
 
 

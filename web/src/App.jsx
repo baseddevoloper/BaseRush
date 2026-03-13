@@ -503,18 +503,19 @@ export default function App() {
         needsApprove = currentAllowance < amountInRaw;
         if (needsApprove) {
           setStatus("Step 1/2: Approve token...");
-        const approveData = encodeFunctionData({
-          abi: ERC20_APPROVE_ABI,
-          functionName: "approve",
-          args: [routerAddress, amountInRaw]
-        });
+          const approveData = encodeFunctionData({
+            abi: ERC20_APPROVE_ABI,
+            functionName: "approve",
+            args: [routerAddress, amountInRaw]
+          });
 
           const approveTx = await provider.request({
             method: "eth_sendTransaction",
             params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
           });
           setLastApproveTx(String(approveTx));
-          await waitForReceipt(provider, String(approveTx));
+          setStatus("Approve submitted. Confirmed olduktan sonra ayni islemi tekrar baslat.");
+          return;
         }
       }
 
@@ -558,9 +559,14 @@ export default function App() {
       });
 
       setLastSwapTx(String(swapTx));
-      await waitForReceipt(provider, String(swapTx));
-
-      setStatus("Trade completed successfully.");
+      setStatus("Swap submitted. Onay durumunu Basescan'den kontrol et.");
+      try {
+        await waitForReceipt(provider, String(swapTx), 45000);
+        setStatus("Trade completed successfully.");
+      } catch (receiptErr) {
+        const msg = String(receiptErr?.message || "").toLowerCase();
+        if (!msg.includes("does not support the requested method")) throw receiptErr;
+      }
     } catch (e) {
       setError(String(e?.message || "trade_failed"));
       setStatus("");

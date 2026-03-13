@@ -136,6 +136,24 @@ async function waitForReceipt(provider, txHash, timeoutMs = 120000) {
   throw new Error("tx_receipt_timeout");
 }
 
+async function estimateGasWithBuffer(
+  provider,
+  txParams,
+  { bufferBps = 3000, minGas = 21000n, maxGas = 2500000n } = {}
+) {
+  try {
+    const raw = await provider.request({ method: "eth_estimateGas", params: [txParams] });
+    let gas = BigInt(String(raw || "0x0"));
+    if (gas < minGas) gas = minGas;
+    let boosted = (gas * BigInt(10000 + Number(bufferBps || 0)) + 9999n) / 10000n;
+    if (boosted < minGas) boosted = minGas;
+    if (boosted > maxGas) boosted = maxGas;
+    return `0x${boosted.toString(16)}`;
+  } catch {
+    return null;
+  }
+}
+
 async function quoteV3ExactIn(provider, quoterAddress, tokenIn, tokenOut, amountInRaw, fee) {
   if (!provider?.request || !quoterAddress || !amountInRaw || amountInRaw <= 0n) return null;
   try {
@@ -509,9 +527,22 @@ export default function App() {
             args: [routerAddress, amountInRaw]
           });
 
+          const approveReq = {
+            from: walletAddress,
+            to: tokenIn,
+            data: approveData,
+            value: "0x0"
+          };
+          const approveGas = await estimateGasWithBuffer(provider, approveReq, {
+            bufferBps: 2000,
+            minGas: 65000n,
+            maxGas: 350000n
+          });
+          if (approveGas) approveReq.gas = approveGas;
+
           const approveTx = await provider.request({
             method: "eth_sendTransaction",
-            params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
+            params: [approveReq]
           });
           setLastApproveTx(String(approveTx));
           setStatus("Approve submitted. Waiting confirmation...");
@@ -565,9 +596,23 @@ export default function App() {
         });
       }
 
+      const swapReq = {
+        from: walletAddress,
+        to: routerAddress,
+        data: swapData,
+        value: txValue
+      };
+      const minSwapGas = venue === "v4" ? 280000n : side === "SELL" ? 200000n : 180000n;
+      const swapGas = await estimateGasWithBuffer(provider, swapReq, {
+        bufferBps: 3000,
+        minGas: minSwapGas,
+        maxGas: 1200000n
+      });
+      if (swapGas) swapReq.gas = swapGas;
+
       const swapTx = await provider.request({
         method: "eth_sendTransaction",
-        params: [{ from: walletAddress, to: routerAddress, data: swapData, value: txValue }]
+        params: [swapReq]
       });
 
       setLastSwapTx(String(swapTx));

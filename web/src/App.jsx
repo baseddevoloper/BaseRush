@@ -11,6 +11,8 @@ import { Badge } from "./components/ui/badge";
 const ETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 const USDC_FALLBACK = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const UNISWAP_V3_QUOTER_FALLBACK = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a";
+const V3_POOL_FEE_FALLBACK = 500;
 
 const ERC20_APPROVE_ABI = [
   {
@@ -83,6 +85,33 @@ const USER_TRADE_ROUTER_ABI = [
   }
 ];
 
+const UNISWAP_V3_QUOTER_ABI = [
+  {
+    type: "function",
+    name: "quoteExactInputSingle",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "fee", type: "uint24" },
+          { name: "sqrtPriceLimitX96", type: "uint160" }
+        ]
+      }
+    ],
+    outputs: [
+      { name: "amountOut", type: "uint256" },
+      { name: "sqrtPriceX96After", type: "uint160" },
+      { name: "initializedTicksCrossed", type: "uint32" },
+      { name: "gasEstimate", type: "uint256" }
+    ]
+  }
+];
+
 function shortAddr(addr) {
   if (!addr) return "-";
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -107,6 +136,43 @@ async function waitForReceipt(provider, txHash, timeoutMs = 120000) {
     await new Promise((r) => setTimeout(r, 1500));
   }
   throw new Error("tx_receipt_timeout");
+}
+
+async function quoteV3ExactIn(provider, quoterAddress, tokenIn, tokenOut, amountInRaw, fee) {
+  if (!provider?.request || !quoterAddress || !amountInRaw || amountInRaw <= 0n) return null;
+  try {
+    const callData = encodeFunctionData({
+      abi: UNISWAP_V3_QUOTER_ABI,
+      functionName: "quoteExactInputSingle",
+      args: [
+        {
+          tokenIn,
+          tokenOut,
+          amountIn: amountInRaw,
+          fee: Number(fee || V3_POOL_FEE_FALLBACK),
+          sqrtPriceLimitX96: 0n
+        }
+      ]
+    });
+    const raw = await provider.request({
+      method: "eth_call",
+      params: [{ to: quoterAddress, data: callData }, "latest"]
+    });
+    const decoded = decodeFunctionResult({
+      abi: UNISWAP_V3_QUOTER_ABI,
+      functionName: "quoteExactInputSingle",
+      data: String(raw || "0x")
+    });
+    const out = Array.isArray(decoded) ? decoded[0] : decoded?.amountOut;
+    if (typeof out === "bigint" && out > 0n) return out;
+    if (out !== undefined && out !== null) {
+      const parsed = BigInt(out);
+      return parsed > 0n ? parsed : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export default function App() {
@@ -136,6 +202,11 @@ export default function App() {
 
   const usdcAddress = useMemo(() => String(onchainConfig?.usdcDeposit?.tokenAddress || USDC_FALLBACK), [onchainConfig]);
   const routerAddress = useMemo(() => String(onchainConfig?.userRouterAddress || "").trim(), [onchainConfig]);
+  const v3QuoterAddress = useMemo(
+    () => String(onchainConfig?.uniswapV3?.quoter || UNISWAP_V3_QUOTER_FALLBACK).trim(),
+    [onchainConfig]
+  );
+  const v3PoolFee = useMemo(() => Number(onchainConfig?.uniswapV3?.poolFee || V3_POOL_FEE_FALLBACK), [onchainConfig]);
 
   const slippagePct = useMemo(() => {
     const raw = slippageMode === "custom" ? Number(customSlippage || 0) : Number(slippageMode || 1);
@@ -387,6 +458,18 @@ export default function App() {
         tokenOut = usdcAddress;
         amountInRaw = parseUnits(nEth.toFixed(6), 18);
         minOutRaw = parseUnits(sellModel.minOutUsdc.toFixed(6), 6);
+      }
+
+      if (venue === "v3") {
+        setStatus("Fetching onchain quote...");
+        const quotedOut = await quoteV3ExactIn(provider, v3QuoterAddress, tokenIn, tokenOut, amountInRaw, v3PoolFee);
+        if (quotedOut && quotedOut > 0n) {
+          const bps = BigInt(Math.max(1, 10000 - slippageBps));
+          const quotedMinOut = (quotedOut * bps) / 10000n;
+          if (quotedMinOut > 0n) minOutRaw = quotedMinOut;
+        } else if (side === "SELL") {
+          minOutRaw = (minOutRaw * 70n) / 100n;
+        }
       }
 
       let needsApprove = false;

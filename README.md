@@ -180,3 +180,27 @@ Kontrol:
   - Signature izni istenir (Farcaster sign-in/quick auth)
   - Wallet baglantisi istenir (Base chain)
 - Baglanti tamamlanmadan uygulama icerigi kilitli kalir ve otomatik retry yapar.
+
+## Wallet-Direct Trade (Non-custodial)
+Bu modelde kullanici para yatirmaz. Islem kendi cuzdanindan imzalanir:
+- tokenIn `transferFrom(user)` ile cekilir
+- swap yapilir (Uniswap/Aerodrome)
+- fee tokenOut uzerinden treasury'ye kesilir
+- kalan tokenOut kullaniciya gider
+
+Yeni kontrat:
+- `contracts/UserTradeRouter.sol`
+
+Deploy komutlari:
+- `npm run contract:compile`
+- `npm run contract:deploy:user-router:base`
+- `npm run contract:deploy:user-router:base-sepolia`
+
+Gerekli env:
+- `USER_TRADE_ROUTER_ADDRESS=0x...`
+- `USER_TRADE_ROUTER_OWNER=0x...` (opsiyonel, default deployer)
+- `FEE_TREASURY_ADDRESS=0x...`
+- `TRADE_FEE_BPS=100`
+- `UNISWAP_V3_ROUTER=0x2626664c2603336E57B271c5C0b26F421741e481`
+- `AERODROME_ROUTER=0xcf77a3ba9a5ca399b7c97c74d54e5be8d5e8f9f3`
+- `AERODROME_FACTORY=0x420DD381b31aEf6683db6B902084cB0FFECe40Da`

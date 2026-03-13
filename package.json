@@ -13,7 +13,9 @@
     "onchain:smoke": "node scripts/onchain_smoke.mjs",
     "contract:compile": "hardhat compile",
     "contract:deploy:base": "hardhat run scripts/deploy-trade-executor.cjs --network base",
-    "contract:deploy:base-sepolia": "hardhat run scripts/deploy-trade-executor.cjs --network baseSepolia"
+    "contract:deploy:base-sepolia": "hardhat run scripts/deploy-trade-executor.cjs --network baseSepolia",
+    "contract:deploy:user-router:base": "hardhat run scripts/deploy-user-trade-router.cjs --network base",
+    "contract:deploy:user-router:base-sepolia": "hardhat run scripts/deploy-user-trade-router.cjs --network baseSepolia"
   },
   "dependencies": {
     "@farcaster/miniapp-node": "^0.1.13",

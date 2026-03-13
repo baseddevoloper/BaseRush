@@ -409,6 +409,7 @@ export default function App() {
   }
 
   const tradeButtonLabel = useMemo(() => (side === "BUY" ? "Buy ETH" : "Sell ETH"), [side]);
+  const quoteReady = side === "BUY" ? !!buyModel : !!sellModel;
 
   return (
     <div className="mx-auto max-w-md px-4 pb-10 pt-6">
@@ -551,7 +552,7 @@ export default function App() {
               </div>
             </div>
 
-            <Button className="w-full" onClick={handleTrade} disabled={!walletConnected || trading || !routerAddress}>
+            <Button className="w-full" onClick={handleTrade} disabled={!walletConnected || trading || !routerAddress || !quoteReady}>
               {trading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {trading ? "Processing..." : tradeButtonLabel}
             </Button>
@@ -576,3 +577,4 @@ export default function App() {
     </div>
   );
 }
+

@@ -40,8 +40,6 @@ const ERC20_ALLOWANCE_ABI = [
   }
 ];
 
-const MAX_UINT256 = (1n << 256n) - 1n;
-
 const USER_TRADE_ROUTER_ABI = [
   {
     type: "function",
@@ -505,11 +503,11 @@ export default function App() {
         needsApprove = currentAllowance < amountInRaw;
         if (needsApprove) {
           setStatus("Step 1/2: Approve token...");
-          const approveData = encodeFunctionData({
-            abi: ERC20_APPROVE_ABI,
-            functionName: "approve",
-            args: [routerAddress, MAX_UINT256]
-          });
+        const approveData = encodeFunctionData({
+          abi: ERC20_APPROVE_ABI,
+          functionName: "approve",
+          args: [routerAddress, amountInRaw]
+        });
 
           const approveTx = await provider.request({
             method: "eth_sendTransaction",

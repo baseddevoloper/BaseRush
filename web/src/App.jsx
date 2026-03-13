@@ -509,14 +509,13 @@ export default function App() {
             args: [routerAddress, amountInRaw]
           });
 
-          const approveTx = await provider.request({
-            method: "eth_sendTransaction",
-            params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
-          });
-          setLastApproveTx(String(approveTx));
-          setStatus("Approve submitted. Confirmed olduktan sonra ayni islemi tekrar baslat.");
-          return;
-        }
+        const approveTx = await provider.request({
+          method: "eth_sendTransaction",
+          params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
+        });
+        setLastApproveTx(String(approveTx));
+        setStatus("Approve submitted. Preparing swap...");
+      }
       }
 
       setStatus(

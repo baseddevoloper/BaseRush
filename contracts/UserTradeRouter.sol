@@ -44,6 +44,11 @@ interface IPermit2Lite {
     function approve(address token, address spender, uint160 amount, uint48 expiration) external;
 }
 
+interface IWETH9 {
+    function deposit() external payable;
+    function withdraw(uint256 amount) external;
+}
+
 contract UserTradeRouter is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -62,6 +67,8 @@ contract UserTradeRouter is ReentrancyGuard {
 
     address public universalRouterV2;
     address public permit2;
+    address public wrappedNativeToken;
+    bool public autoUnwrapNativeOut;
 
     event UserSwapExecuted(
         address indexed user,
@@ -85,6 +92,7 @@ contract UserTradeRouter is ReentrancyGuard {
         address universalRouterV2,
         address permit2
     );
+    event NativeConfigUpdated(address indexed wrappedNativeToken, bool autoUnwrapNativeOut);
     event RescueTransfer(address indexed token, address indexed to, uint256 amount);
 
     error NotOwner();
@@ -94,6 +102,7 @@ contract UserTradeRouter is ReentrancyGuard {
     error MissingRouter();
     error SwapOutTooLow();
     error NothingAfterFee();
+    error NativeTransferFailed();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -109,7 +118,9 @@ contract UserTradeRouter is ReentrancyGuard {
         address _aerodromeFactory,
         uint24 _defaultUniswapPoolFee,
         address _universalRouterV2,
-        address _permit2
+        address _permit2,
+        address _wrappedNativeToken,
+        bool _autoUnwrapNativeOut
     ) {
         if (_owner == address(0) || _feeTreasury == address(0)) revert InvalidAddress();
         if (_feeBps > 10_000) revert InvalidFeeBps();
@@ -125,7 +136,11 @@ contract UserTradeRouter is ReentrancyGuard {
 
         universalRouterV2 = _universalRouterV2;
         permit2 = _permit2;
+        wrappedNativeToken = _wrappedNativeToken;
+        autoUnwrapNativeOut = _autoUnwrapNativeOut;
     }
+
+    receive() external payable {}
 
     function setOwner(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert InvalidAddress();
@@ -165,6 +180,13 @@ contract UserTradeRouter is ReentrancyGuard {
             universalRouterV2,
             permit2
         );
+    }
+
+    function setNativeConfig(address newWrappedNativeToken, bool newAutoUnwrapNativeOut) external onlyOwner {
+        if (newWrappedNativeToken == address(0)) revert InvalidAddress();
+        wrappedNativeToken = newWrappedNativeToken;
+        autoUnwrapNativeOut = newAutoUnwrapNativeOut;
+        emit NativeConfigUpdated(newWrappedNativeToken, newAutoUnwrapNativeOut);
     }
 
     function rescueToken(address token, address to, uint256 amount) external onlyOwner {
@@ -240,6 +262,24 @@ contract UserTradeRouter is ReentrancyGuard {
         return _finalizeSwap(msg.sender, tokenIn, tokenOut, amountIn, minOut, amountOut, recipient, VENUE_UNISWAP_V4);
     }
 
+    function swapUserNativeToToken(address tokenOut, uint256 minOut, address recipient)
+        external
+        payable
+        nonReentrant
+        returns (uint256 amountOutAfterFee)
+    {
+        if (tokenOut == address(0) || recipient == address(0)) revert InvalidAddress();
+        if (msg.value == 0) revert InvalidAmount();
+        if (wrappedNativeToken == address(0) || tokenOut == wrappedNativeToken) revert InvalidAddress();
+
+        IWETH9(wrappedNativeToken).deposit{value: msg.value}();
+        uint256 amountOut =
+            _swapV3OrAero(false, wrappedNativeToken, tokenOut, msg.value, minOut, address(this), defaultUniswapPoolFee, false);
+        return _finalizeSwap(
+            msg.sender, wrappedNativeToken, tokenOut, msg.value, minOut, amountOut, recipient, VENUE_UNISWAP_V3
+        );
+    }
+
     function _finalizeSwap(
         address user,
         address tokenIn,
@@ -254,8 +294,15 @@ contract UserTradeRouter is ReentrancyGuard {
         amountOutAfterFee = amountOut - feeAmountOut;
         if (amountOutAfterFee == 0) revert NothingAfterFee();
 
-        if (feeAmountOut > 0) IERC20(tokenOut).safeTransfer(feeTreasury, feeAmountOut);
-        IERC20(tokenOut).safeTransfer(recipient, amountOutAfterFee);
+        if (tokenOut == wrappedNativeToken && autoUnwrapNativeOut) {
+            if (feeAmountOut > 0) IERC20(tokenOut).safeTransfer(feeTreasury, feeAmountOut);
+            IWETH9(wrappedNativeToken).withdraw(amountOutAfterFee);
+            (bool ok,) = payable(recipient).call{value: amountOutAfterFee}("");
+            if (!ok) revert NativeTransferFailed();
+        } else {
+            if (feeAmountOut > 0) IERC20(tokenOut).safeTransfer(feeTreasury, feeAmountOut);
+            IERC20(tokenOut).safeTransfer(recipient, amountOutAfterFee);
+        }
 
         emit UserSwapExecuted(user, tokenIn, tokenOut, amountIn, minOut, amountOut, feeAmountOut, recipient, venue);
     }

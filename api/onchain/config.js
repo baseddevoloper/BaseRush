@@ -27,6 +27,8 @@ export default async function handler(req, res) {
   const UNISWAP_V4_POOL_HOOKS = process.env.UNISWAP_V4_POOL_HOOKS || "0x0000000000000000000000000000000000000000";
   const UNISWAP_V4_POOL_CURRENCY0 = process.env.UNISWAP_V4_POOL_CURRENCY0 || "0x4200000000000000000000000000000000000006";
   const UNISWAP_V4_POOL_CURRENCY1 = process.env.UNISWAP_V4_POOL_CURRENCY1 || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const WRAPPED_NATIVE_TOKEN = process.env.WRAPPED_NATIVE_TOKEN || "0x4200000000000000000000000000000000000006";
+  const AUTO_UNWRAP_NATIVE_OUT = asBool(process.env.AUTO_UNWRAP_NATIVE_OUT || "true");
   const SERVER_SIGNER_PRIVATE_KEY = process.env.SERVER_SIGNER_PRIVATE_KEY || "";
   const TRADE_EXECUTOR_FUNCTION = process.env.TRADE_EXECUTOR_FUNCTION || "executeTrade";
   const USDC_BASE_ADDRESS = (process.env.USDC_BASE_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").trim();
@@ -63,6 +65,8 @@ export default async function handler(req, res) {
       executorAddress: TRADE_EXECUTOR_ADDRESS || null,
       userRouterAddress: USER_TRADE_ROUTER_ADDRESS || null,
       userRouterConfigured: !!USER_TRADE_ROUTER_ADDRESS,
+      wrappedNativeToken: WRAPPED_NATIVE_TOKEN || null,
+      autoUnwrapNativeOut: AUTO_UNWRAP_NATIVE_OUT,
       uniswapV4: {
         enabled: USER_ROUTER_V4_ENABLED && !!UNISWAP_V4_UNIVERSAL_ROUTER && !!UNISWAP_PERMIT2,
         universalRouter: UNISWAP_V4_UNIVERSAL_ROUTER || null,

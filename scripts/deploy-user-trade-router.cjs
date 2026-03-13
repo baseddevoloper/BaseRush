@@ -12,6 +12,8 @@ async function main() {
   const defaultUniPoolFee = Number(process.env.DEFAULT_UNI_POOL_FEE || "500");
   const universalRouterV2 = process.env.UNISWAP_V4_UNIVERSAL_ROUTER || "0x6ff5693b99212da76ad316178a184ab56d299b43";
   const permit2 = process.env.UNISWAP_PERMIT2 || "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+  const wrappedNativeToken = process.env.WRAPPED_NATIVE_TOKEN || "0x4200000000000000000000000000000000000006";
+  const autoUnwrapNativeOut = String(process.env.AUTO_UNWRAP_NATIVE_OUT || "true").toLowerCase() === "true";
 
   console.log("Network:", hre.network.name);
   console.log("Deployer:", deployer.address);
@@ -24,6 +26,8 @@ async function main() {
   console.log("DefaultUniPoolFee:", defaultUniPoolFee);
   console.log("UniversalRouterV2:", universalRouterV2);
   console.log("Permit2:", permit2);
+  console.log("WrappedNativeToken:", wrappedNativeToken);
+  console.log("AutoUnwrapNativeOut:", autoUnwrapNativeOut);
 
   const bal = await deployer.provider.getBalance(deployer.address);
   console.log("Deployer ETH:", hre.ethers.formatEther(bal));
@@ -38,7 +42,9 @@ async function main() {
     aerodromeFactory,
     defaultUniPoolFee,
     universalRouterV2,
-    permit2
+    permit2,
+    wrappedNativeToken,
+    autoUnwrapNativeOut
   );
   await contract.waitForDeployment();
 

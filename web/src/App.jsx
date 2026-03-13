@@ -69,6 +69,17 @@ const USER_TRADE_ROUTER_ABI = [
       { name: "deadline", type: "uint256" }
     ],
     outputs: [{ name: "amountOutAfterFee", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "swapUserNativeToToken",
+    stateMutability: "payable",
+    inputs: [
+      { name: "tokenOut", type: "address" },
+      { name: "minOut", type: "uint256" },
+      { name: "recipient", type: "address" }
+    ],
+    outputs: [{ name: "amountOutAfterFee", type: "uint256" }]
   }
 ];
 
@@ -243,6 +254,10 @@ export default function App() {
     };
   }, [ethAmount, slippageBps]);
 
+  useEffect(() => {
+    if (side === "SELL" && venue === "v4") setVenue("v3");
+  }, [side, venue]);
+
   async function handleConnectWallet() {
     setConnecting(true);
     setError("");
@@ -374,48 +389,67 @@ export default function App() {
         minOutRaw = parseUnits(sellModel.minOutUsdc.toFixed(6), 6);
       }
 
-      let currentAllowance = 0n;
-      try {
-        const allowanceCallData = encodeFunctionData({
-          abi: ERC20_ALLOWANCE_ABI,
-          functionName: "allowance",
-          args: [walletAddress, routerAddress]
-        });
-        const allowanceRaw = await provider.request({
-          method: "eth_call",
-          params: [{ to: tokenIn, data: allowanceCallData }, "latest"]
-        });
-        const decodedAllowance = decodeFunctionResult({
-          abi: ERC20_ALLOWANCE_ABI,
-          functionName: "allowance",
-          data: String(allowanceRaw || "0x0")
-        });
-        currentAllowance = typeof decodedAllowance === "bigint" ? decodedAllowance : BigInt(decodedAllowance?.[0] || 0);
-      } catch {
-        currentAllowance = 0n;
+      let needsApprove = false;
+      if (side === "BUY") {
+        let currentAllowance = 0n;
+        try {
+          const allowanceCallData = encodeFunctionData({
+            abi: ERC20_ALLOWANCE_ABI,
+            functionName: "allowance",
+            args: [walletAddress, routerAddress]
+          });
+          const allowanceRaw = await provider.request({
+            method: "eth_call",
+            params: [{ to: tokenIn, data: allowanceCallData }, "latest"]
+          });
+          const decodedAllowance = decodeFunctionResult({
+            abi: ERC20_ALLOWANCE_ABI,
+            functionName: "allowance",
+            data: String(allowanceRaw || "0x0")
+          });
+          currentAllowance = typeof decodedAllowance === "bigint" ? decodedAllowance : BigInt(decodedAllowance?.[0] || 0);
+        } catch {
+          currentAllowance = 0n;
+        }
+
+        needsApprove = currentAllowance < amountInRaw;
+        if (needsApprove) {
+          setStatus("Step 1/2: Approve token...");
+          const approveData = encodeFunctionData({
+            abi: ERC20_APPROVE_ABI,
+            functionName: "approve",
+            args: [routerAddress, MAX_UINT256]
+          });
+
+          const approveTx = await provider.request({
+            method: "eth_sendTransaction",
+            params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
+          });
+          setLastApproveTx(String(approveTx));
+          await waitForReceipt(provider, String(approveTx));
+        }
       }
 
-      const needsApprove = currentAllowance < amountInRaw;
-      if (needsApprove) {
-        setStatus("Step 1/2: Approve token...");
-        const approveData = encodeFunctionData({
-          abi: ERC20_APPROVE_ABI,
-          functionName: "approve",
-          args: [routerAddress, MAX_UINT256]
-        });
-
-        const approveTx = await provider.request({
-          method: "eth_sendTransaction",
-          params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
-        });
-        setLastApproveTx(String(approveTx));
-        await waitForReceipt(provider, String(approveTx));
-      }
-
-      setStatus(needsApprove ? (side === "BUY" ? "Step 2/2: Swap to ETH..." : "Step 2/2: Sell ETH...") : (side === "BUY" ? "Step 1/1: Swap to ETH..." : "Step 1/1: Sell ETH..."));
+      setStatus(
+        needsApprove
+          ? "Step 2/2: Swap to ETH..."
+          : side === "BUY"
+            ? "Step 1/1: Swap to ETH..."
+            : "Step 1/1: Sell ETH..."
+      );
 
       let swapData;
-      if (venue === "v4") {
+      let txValue = "0x0";
+
+      if (side === "SELL") {
+        if (venue === "v4") throw new Error("sell_eth_v4_not_supported_yet");
+        swapData = encodeFunctionData({
+          abi: USER_TRADE_ROUTER_ABI,
+          functionName: "swapUserNativeToToken",
+          args: [tokenOut, minOutRaw, walletAddress]
+        });
+        txValue = `0x${amountInRaw.toString(16)}`;
+      } else if (venue === "v4") {
         const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
         swapData = encodeFunctionData({
           abi: USER_TRADE_ROUTER_ABI,
@@ -432,7 +466,7 @@ export default function App() {
 
       const swapTx = await provider.request({
         method: "eth_sendTransaction",
-        params: [{ from: walletAddress, to: routerAddress, data: swapData, value: "0x0" }]
+        params: [{ from: walletAddress, to: routerAddress, data: swapData, value: txValue }]
       });
 
       setLastSwapTx(String(swapTx));
@@ -508,7 +542,7 @@ export default function App() {
               <Button
                 variant={venue === "v4" ? "default" : "outline"}
                 onClick={() => setVenue("v4")}
-                disabled={trading || !onchainConfig?.uniswapV4?.enabled}
+                disabled={trading || side === "SELL" || !onchainConfig?.uniswapV4?.enabled}
               >
                 Uniswap v4
               </Button>

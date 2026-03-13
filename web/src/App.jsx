@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownUp, Loader2, Wallet } from "lucide-react";
+import {
+  Activity as ActivityIcon,
+  ArrowDownUp,
+  CircleAlert,
+  CircleCheck,
+  ExternalLink,
+  Home,
+  Loader2,
+  Settings,
+  Wallet as WalletIcon
+} from "lucide-react";
 import { sdk } from "@farcaster/miniapp-sdk";
 import { useAccount } from "wagmi";
 import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, parseUnits } from "viem";
@@ -212,6 +222,7 @@ export default function App() {
   const [quoteSell, setQuoteSell] = useState(null);
   const [lastApproveTx, setLastApproveTx] = useState("");
   const [lastSwapTx, setLastSwapTx] = useState("");
+  const [activeTab, setActiveTab] = useState("trade");
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -616,7 +627,7 @@ export default function App() {
       });
 
       setLastSwapTx(String(swapTx));
-      setStatus("Swap submitted. Onay durumunu Basescan'den kontrol et.");
+      setStatus("Swap submitted. Check status on Basescan.");
       try {
         await waitForReceipt(provider, String(swapTx), 45000);
         setStatus("Trade completed successfully.");
@@ -634,178 +645,272 @@ export default function App() {
 
   const tradeButtonLabel = useMemo(() => (side === "BUY" ? "Buy ETH" : "Sell ETH"), [side]);
   const quoteReady = side === "BUY" ? !!buyModel : !!sellModel;
+  const canTrade = walletConnected && !trading && !!routerAddress && quoteReady;
 
   return (
-    <div className="mx-auto max-w-md px-4 pb-10 pt-6">
-      <Card className="border-white/10 bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100">
-        <CardHeader className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardDescription className="text-zinc-400">BaseRush Lite</CardDescription>
-              <CardTitle className="text-2xl">ETH Quick Trade</CardTitle>
-            </div>
-            <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
-          </div>
-          <p className="text-xs text-zinc-400">Cuzdan bagla, ETH miktar gir, tek trade dene.</p>
-        </CardHeader>
-
-        <CardContent className="space-y-4">
-          <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3 text-sm">
+    <div className="min-h-dvh bg-zinc-950 text-zinc-100">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,#27272a_0%,#0a0a0a_46%,#000000_100%)]" />
+      <div className="relative mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-24 pt-4">
+        <Card className="border-white/10 bg-zinc-900/70 backdrop-blur">
+          <CardHeader className="space-y-3 pb-4">
             <div className="flex items-center justify-between">
-              <span className="text-zinc-400">Mini app context</span>
-              <span>{miniAppDetected ? "Detected" : "Not detected"}</span>
+              <div>
+                <CardDescription className="text-zinc-400">BaseRush Mobile</CardDescription>
+                <CardTitle className="text-2xl">Test Trade</CardTitle>
+              </div>
+              <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
             </div>
-            <div className="mt-1 flex items-center justify-between">
-              <span className="text-zinc-400">Wallet</span>
-              <span>{walletConnected ? shortAddr(walletAddress) : "Not connected"}</span>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg border border-white/10 bg-black/30 px-2 py-1.5">
+                <p className="text-zinc-500">Wallet</p>
+                <p className="truncate">{walletConnected ? shortAddr(walletAddress) : "Not connected"}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-black/30 px-2 py-1.5">
+                <p className="text-zinc-500">Mini app</p>
+                <p>{miniAppDetected ? "Detected" : "Browser"}</p>
+              </div>
             </div>
-            <div className="mt-1 flex items-center justify-between">
-              <span className="text-zinc-400">Router</span>
-              <span>{routerAddress ? shortAddr(routerAddress) : "Missing"}</span>
-            </div>
-          </div>
+          </CardHeader>
+        </Card>
 
-          {!walletConnected ? (
-            <Button className="w-full" onClick={handleConnectWallet} disabled={connecting}>
-              {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wallet className="mr-2 h-4 w-4" />}
-              {connecting ? "Connecting..." : "Connect Wallet"}
-            </Button>
-          ) : (
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs space-y-1">
-              <div>Wallet connected: {shortAddr(walletAddress)}</div>
-              <a
-                className="text-zinc-200 underline"
-                href={`https://basescan.org/address/${walletAddress}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                View connected wallet on Basescan
-              </a>
-            </div>
-          )}
+        <div className="mt-3 flex-1">
+          {activeTab === "trade" && (
+            <div className="space-y-3">
+              {!walletConnected && (
+                <Card className="border-white/10 bg-zinc-900/80">
+                  <CardContent className="pt-5">
+                    <Button className="w-full" onClick={handleConnectWallet} disabled={connecting}>
+                      {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WalletIcon className="mr-2 h-4 w-4" />}
+                      {connecting ? "Connecting..." : "Connect Wallet"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
 
-          <div className="rounded-2xl border border-white/10 bg-zinc-900/50 p-3 space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant={side === "BUY" ? "default" : "outline"} onClick={() => setSide("BUY")} disabled={trading}>
-                Buy ETH
-              </Button>
-              <Button variant={side === "SELL" ? "default" : "outline"} onClick={() => setSide("SELL")} disabled={trading}>
-                Sell ETH
-              </Button>
-            </div>
+              <Card className="border-white/10 bg-zinc-900/80">
+                <CardContent className="space-y-4 pt-5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant={side === "BUY" ? "default" : "outline"} onClick={() => setSide("BUY")} disabled={trading}>
+                      Buy ETH
+                    </Button>
+                    <Button variant={side === "SELL" ? "default" : "outline"} onClick={() => setSide("SELL")} disabled={trading}>
+                      Sell ETH
+                    </Button>
+                  </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant={venue === "v3" ? "default" : "outline"} onClick={() => setVenue("v3")} disabled={trading}>
-                Uniswap v3
-              </Button>
-              <Button
-                variant={venue === "v4" ? "default" : "outline"}
-                onClick={() => setVenue("v4")}
-                disabled={trading || side === "SELL" || !onchainConfig?.uniswapV4?.enabled}
-              >
-                Uniswap v4
-              </Button>
-            </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant={venue === "v3" ? "default" : "outline"} onClick={() => setVenue("v3")} disabled={trading}>
+                      Route V3
+                    </Button>
+                    <Button
+                      variant={venue === "v4" ? "default" : "outline"}
+                      onClick={() => setVenue("v4")}
+                      disabled={trading || side === "SELL" || !onchainConfig?.uniswapV4?.enabled}
+                    >
+                      Route V4
+                    </Button>
+                  </div>
 
-            <div>
-              <p className="mb-1 text-xs text-zinc-400">ETH Amount</p>
-              <Input
-                type="number"
-                step="0.0001"
-                min="0"
-                value={ethAmount}
-                onChange={(e) => setEthAmount(e.target.value)}
-                placeholder="0.01"
-              />
-            </div>
+                  <div>
+                    <p className="mb-1 text-xs text-zinc-400">ETH Amount</p>
+                    <Input
+                      type="number"
+                      step="0.0001"
+                      min="0"
+                      value={ethAmount}
+                      onChange={(e) => setEthAmount(e.target.value)}
+                      placeholder="0.01"
+                    />
+                    <div className="mt-2 grid grid-cols-4 gap-2">
+                      {["0.0001", "0.001", "0.01", "0.1"].map((amount) => (
+                        <Button
+                          key={amount}
+                          variant={ethAmount === amount ? "default" : "outline"}
+                          onClick={() => setEthAmount(amount)}
+                          disabled={trading}
+                        >
+                          {amount}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
 
-            <div>
-              <p className="mb-1 text-xs text-zinc-400">Slippage</p>
-              <div className="grid grid-cols-4 gap-2">
-                {["1", "3", "10", "custom"].map((v) => (
-                  <Button
-                    key={v}
-                    variant={slippageMode === v ? "default" : "outline"}
-                    onClick={() => setSlippageMode(v)}
-                    disabled={trading}
-                  >
-                    {v === "custom" ? "Custom" : `%${v}`}
+                  <div>
+                    <p className="mb-1 text-xs text-zinc-400">Slippage</p>
+                    <div className="grid grid-cols-4 gap-2">
+                      {["1", "3", "10", "custom"].map((v) => (
+                        <Button
+                          key={v}
+                          variant={slippageMode === v ? "default" : "outline"}
+                          onClick={() => setSlippageMode(v)}
+                          disabled={trading}
+                        >
+                          {v === "custom" ? "Custom" : `%${v}`}
+                        </Button>
+                      ))}
+                    </div>
+                    {slippageMode === "custom" && (
+                      <Input
+                        className="mt-2"
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        max="50"
+                        value={customSlippage}
+                        onChange={(e) => setCustomSlippage(e.target.value)}
+                        placeholder="1"
+                      />
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-400">Pair</span>
+                      <span className="inline-flex items-center gap-1">
+                        <ArrowDownUp className="h-3.5 w-3.5" />
+                        {side === "BUY" ? "USDC -> ETH" : "ETH -> USDC"}
+                      </span>
+                    </div>
+                    {side === "BUY" ? (
+                      <div className="mt-1 flex items-center justify-between">
+                        <span className="text-zinc-400">Estimated cost</span>
+                        <span>{buyModel ? `${buyModel.requiredUsdc.toFixed(2)} USDC` : "-"}</span>
+                      </div>
+                    ) : (
+                      <div className="mt-1 flex items-center justify-between">
+                        <span className="text-zinc-400">Estimated out</span>
+                        <span>{sellModel ? `${sellModel.expectedUsdc.toFixed(2)} USDC` : "-"}</span>
+                      </div>
+                    )}
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-zinc-400">Slippage min out</span>
+                      <span>
+                        {side === "BUY"
+                          ? buyModel
+                            ? `${buyModel.minOutEth.toFixed(6)} ETH`
+                            : "-"
+                          : sellModel
+                            ? `${sellModel.minOutUsdc.toFixed(2)} USDC`
+                            : "-"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-zinc-400">Router</span>
+                      <span>{routerAddress ? shortAddr(routerAddress) : "Missing"}</span>
+                    </div>
+                  </div>
+
+                  <Button className="w-full" onClick={handleTrade} disabled={!canTrade}>
+                    {trading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {trading ? "Processing..." : tradeButtonLabel}
                   </Button>
-                ))}
-              </div>
-              {slippageMode === "custom" && (
-                <Input
-                  className="mt-2"
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  max="50"
-                  value={customSlippage}
-                  onChange={(e) => setCustomSlippage(e.target.value)}
-                  placeholder="1"
-                />
-              )}
+                </CardContent>
+              </Card>
             </div>
+          )}
 
-            <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-400">Pair</span>
-                <span className="inline-flex items-center gap-1">
-                  <ArrowDownUp className="h-3.5 w-3.5" />
-                  {side === "BUY" ? "USDC -> ETH" : "ETH -> USDC"}
-                </span>
-              </div>
-              {side === "BUY" ? (
-                <div className="mt-1 flex items-center justify-between">
-                  <span className="text-zinc-400">Estimated cost</span>
-                  <span>{buyModel ? `${buyModel.requiredUsdc.toFixed(2)} USDC` : "-"}</span>
-                </div>
-              ) : (
-                <div className="mt-1 flex items-center justify-between">
-                  <span className="text-zinc-400">Estimated out</span>
-                  <span>{sellModel ? `${sellModel.expectedUsdc.toFixed(2)} USDC` : "-"}</span>
-                </div>
-              )}
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-zinc-400">Slippage min out</span>
-                <span>
-                  {side === "BUY"
-                    ? buyModel
-                      ? `${buyModel.minOutEth.toFixed(6)} ETH`
-                      : "-"
-                    : sellModel
-                      ? `${sellModel.minOutUsdc.toFixed(2)} USDC`
-                      : "-"}
-                </span>
-              </div>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-zinc-400">Venue</span>
-                <span>{venue.toUpperCase()}</span>
-              </div>
+          {activeTab === "activity" && (
+            <div className="space-y-3">
+              <Card className="border-white/10 bg-zinc-900/80">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Trade Activity</CardTitle>
+                  <CardDescription>Latest execution state and transaction links.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                    <div className="flex items-center gap-2">
+                      {error ? <CircleAlert className="h-4 w-4 text-rose-400" /> : <CircleCheck className="h-4 w-4 text-emerald-400" />}
+                      <span>{error ? "Last action failed" : "System ready"}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-400">{error || status || "No trade action yet."}</p>
+                  </div>
+
+                  {lastApproveTx ? (
+                    <a className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs" href={`https://basescan.org/tx/${lastApproveTx}`} target="_blank" rel="noreferrer">
+                      <span>Approve tx: {shortAddr(lastApproveTx)}</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  ) : (
+                    <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-zinc-500">No approve tx yet.</div>
+                  )}
+
+                  {lastSwapTx ? (
+                    <a className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs" href={`https://basescan.org/tx/${lastSwapTx}`} target="_blank" rel="noreferrer">
+                      <span>Swap tx: {shortAddr(lastSwapTx)}</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  ) : (
+                    <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-zinc-500">No swap tx yet.</div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
+          )}
 
-            <Button className="w-full" onClick={handleTrade} disabled={!walletConnected || trading || !routerAddress || !quoteReady}>
-              {trading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {trading ? "Processing..." : tradeButtonLabel}
+          {activeTab === "wallet" && (
+            <div className="space-y-3">
+              <Card className="border-white/10 bg-zinc-900/80">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Wallet Session</CardTitle>
+                  <CardDescription>Connection and Base network trade config.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-400">Wallet</span>
+                      <span>{walletConnected ? shortAddr(walletAddress) : "Not connected"}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-400">Mini app context</span>
+                      <span>{miniAppDetected ? "Detected" : "Not detected"}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-400">USDC</span>
+                      <span>{shortAddr(usdcAddress)}</span>
+                    </div>
+                  </div>
+
+                  {!walletConnected ? (
+                    <Button className="w-full" onClick={handleConnectWallet} disabled={connecting}>
+                      {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WalletIcon className="mr-2 h-4 w-4" />}
+                      {connecting ? "Connecting..." : "Connect Wallet"}
+                    </Button>
+                  ) : (
+                    <a
+                      className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs"
+                      href={`https://basescan.org/address/${walletAddress}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <span>View connected wallet on Basescan</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-40">
+        <div className="mx-auto max-w-md px-4 pb-4">
+          <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-zinc-900/95 p-2 backdrop-blur">
+            <Button variant={activeTab === "trade" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("trade")}>
+              <Home className="mr-1.5 h-4 w-4" />
+              Trade
+            </Button>
+            <Button variant={activeTab === "activity" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("activity")}>
+              <ActivityIcon className="mr-1.5 h-4 w-4" />
+              Activity
+            </Button>
+            <Button variant={activeTab === "wallet" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("wallet")}>
+              <Settings className="mr-1.5 h-4 w-4" />
+              Wallet
             </Button>
           </div>
-
-          {status && <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">{status}</div>}
-          {error && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs">{error}</div>}
-
-          {lastApproveTx && (
-            <a className="block text-xs text-zinc-300 underline" href={`https://basescan.org/tx/${lastApproveTx}`} target="_blank" rel="noreferrer">
-              Approve tx: {shortAddr(lastApproveTx)}
-            </a>
-          )}
-
-          {lastSwapTx && (
-            <a className="block text-xs text-zinc-300 underline" href={`https://basescan.org/tx/${lastSwapTx}`} target="_blank" rel="noreferrer">
-              Swap tx: {shortAddr(lastSwapTx)}
-            </a>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

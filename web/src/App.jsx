@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDownUp, Loader2, Wallet } from "lucide-react";
 import { sdk } from "@farcaster/miniapp-sdk";
 import { useAccount } from "wagmi";
-import { encodeAbiParameters, encodeFunctionData, parseUnits } from "viem";
+import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, parseUnits } from "viem";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Input } from "./components/ui/input";
@@ -24,6 +24,21 @@ const ERC20_APPROVE_ABI = [
     outputs: [{ name: "", type: "bool" }]
   }
 ];
+
+const ERC20_ALLOWANCE_ABI = [
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" }
+    ],
+    outputs: [{ name: "", type: "uint256" }]
+  }
+];
+
+const MAX_UINT256 = (1n << 256n) - 1n;
 
 const USER_TRADE_ROUTER_ABI = [
   {
@@ -359,21 +374,45 @@ export default function App() {
         minOutRaw = parseUnits(sellModel.minOutUsdc.toFixed(6), 6);
       }
 
-      setStatus("Step 1/2: Approve token...");
-      const approveData = encodeFunctionData({
-        abi: ERC20_APPROVE_ABI,
-        functionName: "approve",
-        args: [routerAddress, amountInRaw]
-      });
+      let currentAllowance = 0n;
+      try {
+        const allowanceCallData = encodeFunctionData({
+          abi: ERC20_ALLOWANCE_ABI,
+          functionName: "allowance",
+          args: [walletAddress, routerAddress]
+        });
+        const allowanceRaw = await provider.request({
+          method: "eth_call",
+          params: [{ to: tokenIn, data: allowanceCallData }, "latest"]
+        });
+        const decodedAllowance = decodeFunctionResult({
+          abi: ERC20_ALLOWANCE_ABI,
+          functionName: "allowance",
+          data: String(allowanceRaw || "0x0")
+        });
+        currentAllowance = typeof decodedAllowance === "bigint" ? decodedAllowance : BigInt(decodedAllowance?.[0] || 0);
+      } catch {
+        currentAllowance = 0n;
+      }
 
-      const approveTx = await provider.request({
-        method: "eth_sendTransaction",
-        params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
-      });
-      setLastApproveTx(String(approveTx));
-      await waitForReceipt(provider, String(approveTx));
+      const needsApprove = currentAllowance < amountInRaw;
+      if (needsApprove) {
+        setStatus("Step 1/2: Approve token...");
+        const approveData = encodeFunctionData({
+          abi: ERC20_APPROVE_ABI,
+          functionName: "approve",
+          args: [routerAddress, MAX_UINT256]
+        });
 
-      setStatus(side === "BUY" ? "Step 2/2: Swap to ETH..." : "Step 2/2: Sell ETH...");
+        const approveTx = await provider.request({
+          method: "eth_sendTransaction",
+          params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
+        });
+        setLastApproveTx(String(approveTx));
+        await waitForReceipt(provider, String(approveTx));
+      }
+
+      setStatus(needsApprove ? (side === "BUY" ? "Step 2/2: Swap to ETH..." : "Step 2/2: Sell ETH...") : (side === "BUY" ? "Step 1/1: Swap to ETH..." : "Step 1/1: Sell ETH..."));
 
       let swapData;
       if (venue === "v4") {
@@ -577,4 +616,7 @@ export default function App() {
     </div>
   );
 }
+
+
+
 

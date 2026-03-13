@@ -19,6 +19,14 @@ export default async function handler(req, res) {
   const BASE_RPC_URL = process.env.BASE_RPC_URL || "";
   const TRADE_EXECUTOR_ADDRESS = process.env.TRADE_EXECUTOR_ADDRESS || "";
   const USER_TRADE_ROUTER_ADDRESS = process.env.USER_TRADE_ROUTER_ADDRESS || "";
+  const UNISWAP_V4_UNIVERSAL_ROUTER = process.env.UNISWAP_V4_UNIVERSAL_ROUTER || "";
+  const UNISWAP_PERMIT2 = process.env.UNISWAP_PERMIT2 || "";
+  const USER_ROUTER_V4_ENABLED = asBool(process.env.USER_ROUTER_V4_ENABLED || "false");
+  const UNISWAP_V4_POOL_FEE = Number(process.env.UNISWAP_V4_POOL_FEE || 500);
+  const UNISWAP_V4_POOL_TICK_SPACING = Number(process.env.UNISWAP_V4_POOL_TICK_SPACING || 10);
+  const UNISWAP_V4_POOL_HOOKS = process.env.UNISWAP_V4_POOL_HOOKS || "0x0000000000000000000000000000000000000000";
+  const UNISWAP_V4_POOL_CURRENCY0 = process.env.UNISWAP_V4_POOL_CURRENCY0 || "0x4200000000000000000000000000000000000006";
+  const UNISWAP_V4_POOL_CURRENCY1 = process.env.UNISWAP_V4_POOL_CURRENCY1 || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
   const SERVER_SIGNER_PRIVATE_KEY = process.env.SERVER_SIGNER_PRIVATE_KEY || "";
   const TRADE_EXECUTOR_FUNCTION = process.env.TRADE_EXECUTOR_FUNCTION || "executeTrade";
   const USDC_BASE_ADDRESS = (process.env.USDC_BASE_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").trim();
@@ -55,6 +63,16 @@ export default async function handler(req, res) {
       executorAddress: TRADE_EXECUTOR_ADDRESS || null,
       userRouterAddress: USER_TRADE_ROUTER_ADDRESS || null,
       userRouterConfigured: !!USER_TRADE_ROUTER_ADDRESS,
+      uniswapV4: {
+        enabled: USER_ROUTER_V4_ENABLED && !!UNISWAP_V4_UNIVERSAL_ROUTER && !!UNISWAP_PERMIT2,
+        universalRouter: UNISWAP_V4_UNIVERSAL_ROUTER || null,
+        permit2: UNISWAP_PERMIT2 || null,
+        poolFee: UNISWAP_V4_POOL_FEE,
+        tickSpacing: UNISWAP_V4_POOL_TICK_SPACING,
+        hooks: UNISWAP_V4_POOL_HOOKS,
+        currency0: UNISWAP_V4_POOL_CURRENCY0,
+        currency1: UNISWAP_V4_POOL_CURRENCY1
+      },
       functionName: TRADE_EXECUTOR_FUNCTION,
       abiEntries,
       argsTemplate,
@@ -68,5 +86,6 @@ export default async function handler(req, res) {
     }
   });
 }
+
 
 

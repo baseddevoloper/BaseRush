@@ -36,8 +36,20 @@ interface IAerodromeRouterV2 {
     ) external returns (uint256[] memory amounts);
 }
 
+interface IUniversalRouterV2 {
+    function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
+}
+
+interface IPermit2Lite {
+    function approve(address token, address spender, uint160 amount, uint48 expiration) external;
+}
+
 contract UserTradeRouter is ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    uint8 internal constant VENUE_UNISWAP_V3 = 0;
+    uint8 internal constant VENUE_AERODROME = 1;
+    uint8 internal constant VENUE_UNISWAP_V4 = 2;
 
     address public owner;
     address public feeTreasury;
@@ -47,6 +59,9 @@ contract UserTradeRouter is ReentrancyGuard {
     address public aerodromeRouter;
     address public aerodromeFactory;
     uint24 public defaultUniswapPoolFee;
+
+    address public universalRouterV2;
+    address public permit2;
 
     event UserSwapExecuted(
         address indexed user,
@@ -62,7 +77,14 @@ contract UserTradeRouter is ReentrancyGuard {
 
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
     event FeeConfigUpdated(address indexed feeTreasury, uint16 feeBps);
-    event RouterConfigUpdated(address indexed uniswapV3Router, address indexed aerodromeRouter, address indexed aerodromeFactory, uint24 defaultUniswapPoolFee);
+    event RouterConfigUpdated(
+        address indexed uniswapV3Router,
+        address indexed aerodromeRouter,
+        address indexed aerodromeFactory,
+        uint24 defaultUniswapPoolFee,
+        address universalRouterV2,
+        address permit2
+    );
     event RescueTransfer(address indexed token, address indexed to, uint256 amount);
 
     error NotOwner();
@@ -85,17 +107,24 @@ contract UserTradeRouter is ReentrancyGuard {
         address _uniswapV3Router,
         address _aerodromeRouter,
         address _aerodromeFactory,
-        uint24 _defaultUniswapPoolFee
+        uint24 _defaultUniswapPoolFee,
+        address _universalRouterV2,
+        address _permit2
     ) {
         if (_owner == address(0) || _feeTreasury == address(0)) revert InvalidAddress();
         if (_feeBps > 10_000) revert InvalidFeeBps();
+
         owner = _owner;
         feeTreasury = _feeTreasury;
         feeBps = _feeBps;
+
         uniswapV3Router = _uniswapV3Router;
         aerodromeRouter = _aerodromeRouter;
         aerodromeFactory = _aerodromeFactory;
         defaultUniswapPoolFee = _defaultUniswapPoolFee == 0 ? 500 : _defaultUniswapPoolFee;
+
+        universalRouterV2 = _universalRouterV2;
+        permit2 = _permit2;
     }
 
     function setOwner(address newOwner) external onlyOwner {
@@ -113,12 +142,29 @@ contract UserTradeRouter is ReentrancyGuard {
         emit FeeConfigUpdated(newTreasury, newFeeBps);
     }
 
-    function setRouterConfig(address newUniswapV3Router, address newAerodromeRouter, address newAerodromeFactory, uint24 newDefaultUniswapPoolFee) external onlyOwner {
+    function setRouterConfig(
+        address newUniswapV3Router,
+        address newAerodromeRouter,
+        address newAerodromeFactory,
+        uint24 newDefaultUniswapPoolFee,
+        address newUniversalRouterV2,
+        address newPermit2
+    ) external onlyOwner {
         uniswapV3Router = newUniswapV3Router;
         aerodromeRouter = newAerodromeRouter;
         aerodromeFactory = newAerodromeFactory;
         if (newDefaultUniswapPoolFee > 0) defaultUniswapPoolFee = newDefaultUniswapPoolFee;
-        emit RouterConfigUpdated(uniswapV3Router, aerodromeRouter, aerodromeFactory, defaultUniswapPoolFee);
+        universalRouterV2 = newUniversalRouterV2;
+        permit2 = newPermit2;
+
+        emit RouterConfigUpdated(
+            uniswapV3Router,
+            aerodromeRouter,
+            aerodromeFactory,
+            defaultUniswapPoolFee,
+            universalRouterV2,
+            permit2
+        );
     }
 
     function rescueToken(address token, address to, uint256 amount) external onlyOwner {
@@ -132,7 +178,12 @@ contract UserTradeRouter is ReentrancyGuard {
         nonReentrant
         returns (uint256 amountOutAfterFee)
     {
-        return _swapUserTokens(tokenIn, tokenOut, amountIn, minOut, recipient, defaultUniswapPoolFee, false, false);
+        if (tokenIn == address(0) || tokenOut == address(0) || recipient == address(0) || tokenIn == tokenOut) revert InvalidAddress();
+        if (amountIn == 0) revert InvalidAmount();
+
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+        uint256 amountOut = _swapV3OrAero(false, tokenIn, tokenOut, amountIn, minOut, address(this), defaultUniswapPoolFee, false);
+        return _finalizeSwap(msg.sender, tokenIn, tokenOut, amountIn, minOut, amountOut, recipient, VENUE_UNISWAP_V3);
     }
 
     function swapUserTokensWithOptions(
@@ -145,25 +196,60 @@ contract UserTradeRouter is ReentrancyGuard {
         bool aeroStable,
         bool useAerodrome
     ) external nonReentrant returns (uint256 amountOutAfterFee) {
-        return _swapUserTokens(tokenIn, tokenOut, amountIn, minOut, recipient, uniPoolFee, aeroStable, useAerodrome);
+        if (tokenIn == address(0) || tokenOut == address(0) || recipient == address(0) || tokenIn == tokenOut) revert InvalidAddress();
+        if (amountIn == 0) revert InvalidAmount();
+
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+        uint256 amountOut = _swapV3OrAero(useAerodrome, tokenIn, tokenOut, amountIn, minOut, address(this), uniPoolFee, aeroStable);
+        return _finalizeSwap(
+            msg.sender,
+            tokenIn,
+            tokenOut,
+            amountIn,
+            minOut,
+            amountOut,
+            recipient,
+            useAerodrome ? VENUE_AERODROME : VENUE_UNISWAP_V3
+        );
     }
 
-    function _swapUserTokens(
+    function swapUserTokensViaUniversalRouter(
         address tokenIn,
         address tokenOut,
         uint256 amountIn,
         uint256 minOut,
         address recipient,
-        uint24 uniPoolFee,
-        bool aeroStable,
-        bool useAerodrome
-    ) internal returns (uint256 amountOutAfterFee) {
+        bytes calldata commands,
+        bytes[] calldata inputs,
+        uint256 deadline
+    ) external nonReentrant returns (uint256 amountOutAfterFee) {
         if (tokenIn == address(0) || tokenOut == address(0) || recipient == address(0) || tokenIn == tokenOut) revert InvalidAddress();
         if (amountIn == 0) revert InvalidAmount();
+        if (universalRouterV2 == address(0) || permit2 == address(0)) revert MissingRouter();
 
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-        uint256 amountOut = _swap(useAerodrome, tokenIn, tokenOut, amountIn, minOut, address(this), uniPoolFee, aeroStable);
+        _approvePermit2ForUniversalRouter(tokenIn, amountIn);
 
+        uint256 outBefore = IERC20(tokenOut).balanceOf(address(this));
+        IUniversalRouterV2(universalRouterV2).execute(commands, inputs, deadline);
+        uint256 outAfter = IERC20(tokenOut).balanceOf(address(this));
+
+        uint256 amountOut = outAfter > outBefore ? outAfter - outBefore : 0;
+        if (amountOut < minOut) revert SwapOutTooLow();
+
+        return _finalizeSwap(msg.sender, tokenIn, tokenOut, amountIn, minOut, amountOut, recipient, VENUE_UNISWAP_V4);
+    }
+
+    function _finalizeSwap(
+        address user,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 minOut,
+        uint256 amountOut,
+        address recipient,
+        uint8 venue
+    ) internal returns (uint256 amountOutAfterFee) {
         uint256 feeAmountOut = (amountOut * feeBps) / 10_000;
         amountOutAfterFee = amountOut - feeAmountOut;
         if (amountOutAfterFee == 0) revert NothingAfterFee();
@@ -171,10 +257,10 @@ contract UserTradeRouter is ReentrancyGuard {
         if (feeAmountOut > 0) IERC20(tokenOut).safeTransfer(feeTreasury, feeAmountOut);
         IERC20(tokenOut).safeTransfer(recipient, amountOutAfterFee);
 
-        emit UserSwapExecuted(msg.sender, tokenIn, tokenOut, amountIn, minOut, amountOut, feeAmountOut, recipient, useAerodrome ? 1 : 0);
+        emit UserSwapExecuted(user, tokenIn, tokenOut, amountIn, minOut, amountOut, feeAmountOut, recipient, venue);
     }
 
-    function _swap(
+    function _swapV3OrAero(
         bool useAerodrome,
         address tokenIn,
         address tokenOut,
@@ -207,6 +293,18 @@ contract UserTradeRouter is ReentrancyGuard {
         }
 
         if (amountOut < minOut) revert SwapOutTooLow();
+    }
+
+    function _approvePermit2ForUniversalRouter(address token, uint256 amount) internal {
+        IERC20 erc20 = IERC20(token);
+
+        uint256 allowancePermit2 = erc20.allowance(address(this), permit2);
+        if (allowancePermit2 < amount) {
+            if (allowancePermit2 > 0) erc20.forceApprove(permit2, 0);
+            erc20.forceApprove(permit2, type(uint256).max);
+        }
+
+        IPermit2Lite(permit2).approve(token, universalRouterV2, type(uint160).max, type(uint48).max);
     }
 
     function _approveIfNeeded(address token, address spender, uint256 amount) internal {

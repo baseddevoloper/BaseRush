@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDownUp, Loader2, Wallet } from "lucide-react";
 import { sdk } from "@farcaster/miniapp-sdk";
-import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
-import { useAccount, useConnect } from "wagmi";
-import { encodeFunctionData, parseUnits } from "viem";
+import { useAccount } from "wagmi";
+import { encodeAbiParameters, encodeFunctionData, parseUnits } from "viem";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Input } from "./components/ui/input";
 import { Badge } from "./components/ui/badge";
 
-const ETH_SYMBOL = "ETH";
 const ETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 const USDC_FALLBACK = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const ERC20_APPROVE_ABI = [
   {
@@ -39,12 +38,32 @@ const USER_TRADE_ROUTER_ABI = [
       { name: "recipient", type: "address" }
     ],
     outputs: [{ name: "amountOutAfterFee", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "swapUserTokensViaUniversalRouter",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "tokenIn", type: "address" },
+      { name: "tokenOut", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minOut", type: "uint256" },
+      { name: "recipient", type: "address" },
+      { name: "commands", type: "bytes" },
+      { name: "inputs", type: "bytes[]" },
+      { name: "deadline", type: "uint256" }
+    ],
+    outputs: [{ name: "amountOutAfterFee", type: "uint256" }]
   }
 ];
 
 function shortAddr(addr) {
   if (!addr) return "-";
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+function sortCurrencies(a, b) {
+  return BigInt(a.toLowerCase()) < BigInt(b.toLowerCase()) ? [a, b] : [b, a];
 }
 
 async function getJson(path) {
@@ -57,10 +76,7 @@ async function getJson(path) {
 async function waitForReceipt(provider, txHash, timeoutMs = 120000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const receipt = await provider.request({
-      method: "eth_getTransactionReceipt",
-      params: [txHash]
-    });
+    const receipt = await provider.request({ method: "eth_getTransactionReceipt", params: [txHash] });
     if (receipt && receipt.blockNumber) return receipt;
     await new Promise((r) => setTimeout(r, 1500));
   }
@@ -69,7 +85,6 @@ async function waitForReceipt(provider, txHash, timeoutMs = 120000) {
 
 export default function App() {
   const { address: wagmiAddress, isConnected: wagmiConnected } = useAccount();
-  const { connectAsync } = useConnect();
 
   const [miniAppDetected, setMiniAppDetected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -81,22 +96,59 @@ export default function App() {
   const [onchainConfig, setOnchainConfig] = useState(null);
 
   const [side, setSide] = useState("BUY");
-  const [amount, setAmount] = useState("25");
-  const [slippageBps, setSlippageBps] = useState("100");
-  const [quote, setQuote] = useState(null);
+  const [venue, setVenue] = useState("v3");
+  const [ethAmount, setEthAmount] = useState("0.01");
+  const [slippageMode, setSlippageMode] = useState("1");
+  const [customSlippage, setCustomSlippage] = useState("1");
+
+  const [quoteSell, setQuoteSell] = useState(null);
   const [lastApproveTx, setLastApproveTx] = useState("");
   const [lastSwapTx, setLastSwapTx] = useState("");
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
 
-  const usdcAddress = useMemo(() => {
-    return String(onchainConfig?.usdcDeposit?.tokenAddress || USDC_FALLBACK);
-  }, [onchainConfig]);
+  const usdcAddress = useMemo(() => String(onchainConfig?.usdcDeposit?.tokenAddress || USDC_FALLBACK), [onchainConfig]);
+  const routerAddress = useMemo(() => String(onchainConfig?.userRouterAddress || "").trim(), [onchainConfig]);
 
-  const routerAddress = useMemo(() => {
-    return String(onchainConfig?.userRouterAddress || "").trim();
-  }, [onchainConfig]);
+  const slippagePct = useMemo(() => {
+    const raw = slippageMode === "custom" ? Number(customSlippage || 0) : Number(slippageMode || 1);
+    return Math.max(0.1, Math.min(50, raw));
+  }, [slippageMode, customSlippage]);
+
+  const slippageBps = useMemo(() => Math.round(slippagePct * 100), [slippagePct]);
+
+  const buyModel = useMemo(() => {
+    const amountEth = Number(ethAmount || 0);
+    const price = Number(quoteSell?.price || 0);
+    const feeBps = Number(quoteSell?.feeBps || 0);
+    if (!(amountEth > 0) || !(price > 0)) return null;
+
+    const feeFactor = 1 - feeBps / 10000;
+    if (feeFactor <= 0) return null;
+
+    const requiredUsdc = (amountEth * price) / feeFactor;
+    const minOutEth = amountEth * (1 - slippagePct / 100);
+
+    return {
+      amountEth,
+      requiredUsdc,
+      minOutEth
+    };
+  }, [ethAmount, quoteSell, slippagePct]);
+
+  const sellModel = useMemo(() => {
+    const amountEth = Number(ethAmount || 0);
+    const outUsdc = Number(quoteSell?.outUsdc || 0);
+    if (!(amountEth > 0) || !(outUsdc > 0)) return null;
+
+    const minOutUsdc = outUsdc * (1 - slippagePct / 100);
+    return {
+      amountEth,
+      expectedUsdc: outUsdc,
+      minOutUsdc
+    };
+  }, [ethAmount, quoteSell, slippagePct]);
 
   function getProvider() {
     return (
@@ -120,9 +172,21 @@ export default function App() {
 
       try {
         const out = await getJson("/api/onchain/config");
-        if (active) setOnchainConfig(out.onchain || null);
+        if (!active) return;
+        setOnchainConfig(out.onchain || null);
+        if (out?.onchain?.uniswapV4?.enabled) setVenue("v4");
       } catch {
         if (active) setOnchainConfig(null);
+      }
+
+      try {
+        const provider = getProvider();
+        if (!provider?.request || !active) return;
+        const accounts = await provider.request({ method: "eth_accounts" });
+        const addr = Array.isArray(accounts) ? String(accounts[0] || "") : "";
+        if (addr && active) setConnectedAddress(addr);
+      } catch {
+        // ignore
       }
     }
 
@@ -135,56 +199,48 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadQuote() {
-      const n = Number(amount || 0);
-      const slip = Math.max(10, Math.min(2000, Number(slippageBps || 100)));
+    async function loadQuoteSell() {
+      const n = Number(ethAmount || 0);
       if (!(n > 0)) {
-        setQuote(null);
+        setQuoteSell(null);
         return;
       }
 
       const params = new URLSearchParams({
-        token: ETH_SYMBOL,
-        side,
+        token: "ETH",
+        side: "SELL",
+        tokenAmount: String(n),
         userId: "guest",
-        slippageBps: String(slip)
+        slippageBps: String(slippageBps)
       });
-
-      if (side === "BUY") params.set("amountUsdc", String(n));
-      else params.set("tokenAmount", String(n));
 
       try {
         const out = await getJson(`/api/trade/quote?${params.toString()}`);
-        if (!cancelled) setQuote(out.quote || null);
+        if (!cancelled) setQuoteSell(out.quote || null);
       } catch {
-        if (!cancelled) setQuote(null);
+        if (!cancelled) setQuoteSell(null);
       }
     }
 
-    loadQuote();
+    loadQuoteSell();
     return () => {
       cancelled = true;
     };
-  }, [side, amount, slippageBps]);
+  }, [ethAmount, slippageBps]);
 
   async function handleConnectWallet() {
     setConnecting(true);
     setError("");
     setStatus("Connecting wallet...");
-    try {
-      const result = await connectAsync({ connector: farcasterMiniApp(), chainId: 8453 });
-      const account = result?.accounts?.[0] || "";
-      if (account) {
-        setConnectedAddress(String(account));
-        setStatus(`Connected: ${shortAddr(String(account))}`);
-        return;
-      }
 
+    try {
       const provider = getProvider();
       if (!provider?.request) throw new Error("wallet_provider_unavailable");
+
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       const addr = Array.isArray(accounts) ? String(accounts[0] || "") : "";
       if (!addr) throw new Error("wallet_not_connected");
+
       setConnectedAddress(addr);
       setStatus(`Connected: ${shortAddr(addr)}`);
     } catch (e) {
@@ -193,6 +249,79 @@ export default function App() {
     } finally {
       setConnecting(false);
     }
+  }
+
+  function buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw) {
+    const v4 = onchainConfig?.uniswapV4;
+    if (!v4?.enabled) throw new Error("v4_not_enabled");
+
+    const [sorted0, sorted1] = sortCurrencies(tokenIn, tokenOut);
+    const currency0 = String(v4.currency0 || sorted0);
+    const currency1 = String(v4.currency1 || sorted1);
+    const zeroForOne = tokenIn.toLowerCase() === currency0.toLowerCase();
+
+    const actions = "0x060c0f"; // SWAP_EXACT_IN_SINGLE + SETTLE_ALL + TAKE_ALL
+
+    const swapExactInSingle = encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            {
+              name: "poolKey",
+              type: "tuple",
+              components: [
+                { name: "currency0", type: "address" },
+                { name: "currency1", type: "address" },
+                { name: "fee", type: "uint24" },
+                { name: "tickSpacing", type: "int24" },
+                { name: "hooks", type: "address" }
+              ]
+            },
+            { name: "zeroForOne", type: "bool" },
+            { name: "amountIn", type: "uint128" },
+            { name: "amountOutMinimum", type: "uint128" },
+            { name: "hookData", type: "bytes" }
+          ]
+        }
+      ],
+      [
+        {
+          poolKey: {
+            currency0,
+            currency1,
+            fee: Number(v4.poolFee || 500),
+            tickSpacing: Number(v4.tickSpacing || 10),
+            hooks: String(v4.hooks || ZERO_ADDRESS)
+          },
+          zeroForOne,
+          amountIn: BigInt(amountInRaw),
+          amountOutMinimum: BigInt(minOutRaw),
+          hookData: "0x"
+        }
+      ]
+    );
+
+    const settleAll = encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }],
+      [tokenIn, amountInRaw]
+    );
+
+    const takeAll = encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }],
+      [tokenOut, minOutRaw]
+    );
+
+    const routerInput = encodeAbiParameters(
+      [{ type: "bytes" }, { type: "bytes[]" }],
+      [actions, [swapExactInSingle, settleAll, takeAll]]
+    );
+
+    return {
+      commands: "0x10", // V4_SWAP command
+      inputs: [routerInput],
+      deadline: BigInt(Math.floor(Date.now() / 1000) + 180)
+    };
   }
 
   async function handleTrade() {
@@ -208,32 +337,26 @@ export default function App() {
       const provider = getProvider();
       if (!provider?.request) throw new Error("wallet_provider_unavailable");
 
-      const n = Number(amount || 0);
-      if (!(n > 0)) throw new Error("invalid_amount");
-
-      const slip = Math.max(10, Math.min(2000, Number(slippageBps || 100)));
+      const nEth = Number(ethAmount || 0);
+      if (!(nEth > 0)) throw new Error("invalid_eth_amount");
 
       let tokenIn;
       let tokenOut;
       let amountInRaw;
-      let minOutRaw = 0n;
+      let minOutRaw;
 
       if (side === "BUY") {
+        if (!buyModel) throw new Error("quote_missing_for_buy");
         tokenIn = usdcAddress;
         tokenOut = ETH_ADDRESS;
-        amountInRaw = parseUnits(n.toFixed(6), 6);
-
-        const outToken = Number(quote?.outTokenAmount || 0);
-        const minOutToken = outToken * (1 - slip / 10000);
-        minOutRaw = minOutToken > 0 ? parseUnits(minOutToken.toFixed(6), 18) : 0n;
+        amountInRaw = parseUnits(buyModel.requiredUsdc.toFixed(6), 6);
+        minOutRaw = parseUnits(buyModel.minOutEth.toFixed(6), 18);
       } else {
+        if (!sellModel) throw new Error("quote_missing_for_sell");
         tokenIn = ETH_ADDRESS;
         tokenOut = usdcAddress;
-        amountInRaw = parseUnits(n.toFixed(6), 18);
-
-        const outUsdc = Number(quote?.outUsdc || 0);
-        const minOutUsdc = outUsdc * (1 - slip / 10000);
-        minOutRaw = minOutUsdc > 0 ? parseUnits(minOutUsdc.toFixed(6), 6) : 0n;
+        amountInRaw = parseUnits(nEth.toFixed(6), 18);
+        minOutRaw = parseUnits(sellModel.minOutUsdc.toFixed(6), 6);
       }
 
       setStatus("Step 1/2: Approve token...");
@@ -250,12 +373,23 @@ export default function App() {
       setLastApproveTx(String(approveTx));
       await waitForReceipt(provider, String(approveTx));
 
-      setStatus("Step 2/2: Swap ETH...");
-      const swapData = encodeFunctionData({
-        abi: USER_TRADE_ROUTER_ABI,
-        functionName: "swapUserTokens",
-        args: [tokenIn, tokenOut, amountInRaw, minOutRaw, walletAddress]
-      });
+      setStatus(side === "BUY" ? "Step 2/2: Swap to ETH..." : "Step 2/2: Sell ETH...");
+
+      let swapData;
+      if (venue === "v4") {
+        const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
+        swapData = encodeFunctionData({
+          abi: USER_TRADE_ROUTER_ABI,
+          functionName: "swapUserTokensViaUniversalRouter",
+          args: [tokenIn, tokenOut, amountInRaw, minOutRaw, walletAddress, v4Payload.commands, v4Payload.inputs, v4Payload.deadline]
+        });
+      } else {
+        swapData = encodeFunctionData({
+          abi: USER_TRADE_ROUTER_ABI,
+          functionName: "swapUserTokens",
+          args: [tokenIn, tokenOut, amountInRaw, minOutRaw, walletAddress]
+        });
+      }
 
       const swapTx = await provider.request({
         method: "eth_sendTransaction",
@@ -274,15 +408,7 @@ export default function App() {
     }
   }
 
-  const expectedOutLabel = useMemo(() => {
-    if (!quote) return "-";
-    if (side === "BUY") return `${Number(quote.outTokenAmount || 0).toFixed(6)} ETH`;
-    return `${Number(quote.outUsdc || 0).toFixed(2)} USDC`;
-  }, [quote, side]);
-
-  const tradeButtonLabel = useMemo(() => {
-    return side === "BUY" ? "Buy ETH" : "Sell ETH";
-  }, [side]);
+  const tradeButtonLabel = useMemo(() => (side === "BUY" ? "Buy ETH" : "Sell ETH"), [side]);
 
   return (
     <div className="mx-auto max-w-md px-4 pb-10 pt-6">
@@ -295,7 +421,7 @@ export default function App() {
             </div>
             <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
           </div>
-          <p className="text-xs text-zinc-400">Tek ekran: cuzdan bagla ve ETH buy/sell dene.</p>
+          <p className="text-xs text-zinc-400">Cuzdan bagla, ETH miktar gir, tek trade dene.</p>
         </CardHeader>
 
         <CardContent className="space-y-4">
@@ -314,10 +440,16 @@ export default function App() {
             </div>
           </div>
 
-          <Button className="w-full" onClick={handleConnectWallet} disabled={connecting}>
-            {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wallet className="mr-2 h-4 w-4" />}
-            {connecting ? "Connecting..." : "Connect Wallet"}
-          </Button>
+          {!walletConnected ? (
+            <Button className="w-full" onClick={handleConnectWallet} disabled={connecting}>
+              {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wallet className="mr-2 h-4 w-4" />}
+              {connecting ? "Connecting..." : "Connect Wallet"}
+            </Button>
+          ) : (
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">
+              Wallet connected: {shortAddr(walletAddress)}
+            </div>
+          )}
 
           <div className="rounded-2xl border border-white/10 bg-zinc-900/50 p-3 space-y-3">
             <div className="grid grid-cols-2 gap-2">
@@ -329,38 +461,93 @@ export default function App() {
               </Button>
             </div>
 
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant={venue === "v3" ? "default" : "outline"} onClick={() => setVenue("v3")} disabled={trading}>
+                Uniswap v3
+              </Button>
+              <Button
+                variant={venue === "v4" ? "default" : "outline"}
+                onClick={() => setVenue("v4")}
+                disabled={trading || !onchainConfig?.uniswapV4?.enabled}
+              >
+                Uniswap v4
+              </Button>
+            </div>
+
             <div>
-              <p className="mb-1 text-xs text-zinc-400">{side === "BUY" ? "Amount In (USDC)" : "Amount In (ETH)"}</p>
+              <p className="mb-1 text-xs text-zinc-400">ETH Amount</p>
               <Input
                 type="number"
                 step="0.0001"
                 min="0"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder={side === "BUY" ? "25" : "0.01"}
+                value={ethAmount}
+                onChange={(e) => setEthAmount(e.target.value)}
+                placeholder="0.01"
               />
             </div>
 
             <div>
-              <p className="mb-1 text-xs text-zinc-400">Slippage (bps)</p>
-              <Input
-                type="number"
-                min="10"
-                max="2000"
-                step="10"
-                value={slippageBps}
-                onChange={(e) => setSlippageBps(e.target.value)}
-              />
+              <p className="mb-1 text-xs text-zinc-400">Slippage</p>
+              <div className="grid grid-cols-4 gap-2">
+                {["1", "3", "10", "custom"].map((v) => (
+                  <Button
+                    key={v}
+                    variant={slippageMode === v ? "default" : "outline"}
+                    onClick={() => setSlippageMode(v)}
+                    disabled={trading}
+                  >
+                    {v === "custom" ? "Custom" : `%${v}`}
+                  </Button>
+                ))}
+              </div>
+              {slippageMode === "custom" && (
+                <Input
+                  className="mt-2"
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  max="50"
+                  value={customSlippage}
+                  onChange={(e) => setCustomSlippage(e.target.value)}
+                  placeholder="1"
+                />
+              )}
             </div>
 
             <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-zinc-400">Pair</span>
-                <span className="inline-flex items-center gap-1"><ArrowDownUp className="h-3.5 w-3.5" /> {side === "BUY" ? "USDC -> ETH" : "ETH -> USDC"}</span>
+                <span className="inline-flex items-center gap-1">
+                  <ArrowDownUp className="h-3.5 w-3.5" />
+                  {side === "BUY" ? "USDC -> ETH" : "ETH -> USDC"}
+                </span>
+              </div>
+              {side === "BUY" ? (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-zinc-400">Estimated cost</span>
+                  <span>{buyModel ? `${buyModel.requiredUsdc.toFixed(2)} USDC` : "-"}</span>
+                </div>
+              ) : (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-zinc-400">Estimated out</span>
+                  <span>{sellModel ? `${sellModel.expectedUsdc.toFixed(2)} USDC` : "-"}</span>
+                </div>
+              )}
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-zinc-400">Slippage min out</span>
+                <span>
+                  {side === "BUY"
+                    ? buyModel
+                      ? `${buyModel.minOutEth.toFixed(6)} ETH`
+                      : "-"
+                    : sellModel
+                      ? `${sellModel.minOutUsdc.toFixed(2)} USDC`
+                      : "-"}
+                </span>
               </div>
               <div className="mt-1 flex items-center justify-between">
-                <span className="text-zinc-400">Expected out</span>
-                <span>{expectedOutLabel}</span>
+                <span className="text-zinc-400">Venue</span>
+                <span>{venue.toUpperCase()}</span>
               </div>
             </div>
 

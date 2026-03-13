@@ -509,13 +509,26 @@ export default function App() {
             args: [routerAddress, amountInRaw]
           });
 
-        const approveTx = await provider.request({
-          method: "eth_sendTransaction",
-          params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
-        });
-        setLastApproveTx(String(approveTx));
-        setStatus("Approve submitted. Preparing swap...");
-      }
+          const approveTx = await provider.request({
+            method: "eth_sendTransaction",
+            params: [{ from: walletAddress, to: tokenIn, data: approveData, value: "0x0" }]
+          });
+          setLastApproveTx(String(approveTx));
+          setStatus("Approve submitted. Waiting confirmation...");
+
+          let approveConfirmed = false;
+          try {
+            await waitForReceipt(provider, String(approveTx), 45000);
+            approveConfirmed = true;
+          } catch (approveErr) {
+            const msg = String(approveErr?.message || "").toLowerCase();
+            if (!msg.includes("does not support the requested method")) throw approveErr;
+          }
+
+          if (!approveConfirmed) {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
       }
 
       setStatus(
@@ -613,8 +626,16 @@ export default function App() {
               {connecting ? "Connecting..." : "Connect Wallet"}
             </Button>
           ) : (
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">
-              Wallet connected: {shortAddr(walletAddress)}
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs space-y-1">
+              <div>Wallet connected: {shortAddr(walletAddress)}</div>
+              <a
+                className="text-zinc-200 underline"
+                href={`https://basescan.org/address/${walletAddress}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View connected wallet on Basescan
+              </a>
             </div>
           )}
 

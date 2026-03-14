@@ -27,6 +27,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const UNISWAP_V3_QUOTER_FALLBACK = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a";
 const V3_POOL_FEE_FALLBACK = 500;
 const DEFAULT_TRADE_FEE_BPS = 35;
+const MAX_UINT256 = (1n << 256n) - 1n;
 
 const ERC20_APPROVE_ABI = [
   {
@@ -181,6 +182,34 @@ async function estimateGasWithBuffer(
   } catch {
     return null;
   }
+}
+
+async function waitForAllowance(provider, token, owner, spender, requiredAmount, timeoutMs = 90000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const allowanceCallData = encodeFunctionData({
+        abi: ERC20_ALLOWANCE_ABI,
+        functionName: "allowance",
+        args: [owner, spender]
+      });
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [{ to: token, data: allowanceCallData }, "latest"]
+      });
+      const decoded = decodeFunctionResult({
+        abi: ERC20_ALLOWANCE_ABI,
+        functionName: "allowance",
+        data: String(raw || "0x0")
+      });
+      const allowanceNow = typeof decoded === "bigint" ? decoded : BigInt(decoded?.[0] || 0);
+      if (allowanceNow >= requiredAmount) return true;
+    } catch {
+      // retry
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return false;
 }
 
 async function quoteV3ExactIn(provider, quoterAddress, tokenIn, tokenOut, amountInRaw, fee) {
@@ -1109,7 +1138,7 @@ export default function App() {
           const approveData = encodeFunctionData({
             abi: ERC20_APPROVE_ABI,
             functionName: "approve",
-            args: [routerAddress, amountInRaw]
+            args: [routerAddress, MAX_UINT256]
           });
 
           const approveReq = {
@@ -1131,18 +1160,16 @@ export default function App() {
           });
           setLastApproveTx(String(approveTx));
           setStatus("Approve submitted. Waiting confirmation...");
-
-          let approveConfirmed = false;
-          try {
-            await waitForReceipt(provider, String(approveTx), 45000);
-            approveConfirmed = true;
-          } catch (approveErr) {
-            const msg = String(approveErr?.message || "").toLowerCase();
-            if (!msg.includes("does not support the requested method")) throw approveErr;
-          }
-
-          if (!approveConfirmed) {
-            await new Promise((r) => setTimeout(r, 1500));
+          const allowanceReady = await waitForAllowance(
+            provider,
+            tokenIn,
+            walletAddress,
+            routerAddress,
+            amountInRaw,
+            90000
+          );
+          if (!allowanceReady) {
+            throw new Error("approve_not_confirmed");
           }
         }
       }

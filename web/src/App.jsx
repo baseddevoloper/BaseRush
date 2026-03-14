@@ -147,7 +147,8 @@ function sortCurrencies(a, b) {
 }
 
 async function getJson(path, init) {
-  const res = await fetch(path, init);
+  const mergedInit = { cache: "no-store", ...(init || {}) };
+  const res = await fetch(path, mergedInit);
   const data = await res.json();
   if (!res.ok || data?.ok === false) throw new Error(data?.error || "request_failed");
   return data;
@@ -637,7 +638,7 @@ export default function App() {
     let cancelled = false;
     async function loadSocialProfile() {
       try {
-        const out = await getJson(`/api/social/profile?userId=${encodeURIComponent(currentUserId)}&walletAddress=${encodeURIComponent(walletAddress || "")}`);
+        const out = await getJson(`/api/social/profile?userId=${encodeURIComponent(currentUserId)}&walletAddress=${encodeURIComponent(walletAddress || "")}&_t=${Date.now()}`);
         if (!cancelled) setSocialProfile(out?.profile || null);
       } catch {
         if (!cancelled) setSocialProfile(null);

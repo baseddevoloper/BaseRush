@@ -725,7 +725,7 @@ export default function App() {
     const timer = setTimeout(async () => {
       try {
         const q = tokenQuery.trim();
-        const out = await getJson(`/api/token/search?listedOnly=true&q=${encodeURIComponent(q)}`);
+        const out = await getJson(`/api/token/search?listedOnly=false&q=${encodeURIComponent(q)}`);
         if (!cancelled) setSearchTokens(Array.isArray(out?.items) ? out.items : []);
       } catch {
         if (!cancelled) setSearchTokens([]);
@@ -1359,17 +1359,6 @@ export default function App() {
                   </div>
                 </CardContent>
               </Card>
-
-              {!walletConnected && (
-                <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
-                  <CardContent className="pt-5">
-                    <Button className="w-full" onClick={handleConnectWallet} disabled={connecting}>
-                      {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WalletIcon className="mr-2 h-4 w-4" />}
-                      {connecting ? "Connecting..." : "Connect Wallet"}
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
 
               {tradePanelOpen ? (
                 <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">

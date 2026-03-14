@@ -30,6 +30,8 @@ const PROFILE_DB_FILE = path.resolve(PROFILE_DB_DIR, "profiles.json");
 
 const TOKEN_REGISTRY = {
   "0x4200000000000000000000000000000000000006": { symbol: "ETH", name: "Ethereum", contract: "0x4200000000000000000000000000000000000006", decimals: 18 },
+  "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": { symbol: "CBBTC", name: "Coinbase Wrapped BTC", contract: "0xCbb7C0000aB88B473b1f5AFd9ef808440eed33bF", decimals: 8 },
+  "0xa88594d404727625a9437c3f886c7643872296ae": { symbol: "WELL", name: "Moonwell", contract: "0xA88594D404727625A9437C3f886C7643872296AE", decimals: 18 },
   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": { symbol: "AERO", name: "Aerodrome", contract: "0x940181a94a35a4569e4529a3cdfb74e38fd98631", decimals: 18 },
   "0x4ed4e862860beef2b1f4e1a6f3c5fcb4f6f8f7f7": { symbol: "DEGEN", name: "Degen", contract: "0x4ed4e862860beef2b1f4e1a6f3c5fcb4f6f8f7f7", decimals: 18 },
   "0x532f27101965dd16442e59d40670faf5ebb142e4": { symbol: "BRETT", name: "Brett", contract: "0x532f27101965dd16442e59d40670faf5ebb142e4", decimals: 18 },
@@ -39,6 +41,8 @@ const TOKEN_REGISTRY = {
 
 const tokenPrices = {
   ETH: 3500,
+  CBBTC: 88000,
+  WELL: 0.07,
   AERO: 1.2,
   DEGEN: 0.015,
   BRETT: 0.14,
@@ -48,13 +52,15 @@ const tokenPrices = {
 
 const TOKEN_MARKET_DATA = {
   ETH: { verified: true, tradable: true, mcap: "$420.2B", volume24h: "$12.8B", change24h: 1.92, spark: "0,30 16,28 32,26 48,24 64,20 80,18 96,14 112,12" },
+  CBBTC: { verified: true, tradable: true, mcap: "$5.1B", volume24h: "$680M", change24h: 0.84, spark: "0,18 16,17 32,16 48,15 64,14 80,13 96,11 112,10" },
+  WELL: { verified: true, tradable: true, mcap: "$280M", volume24h: "$14M", change24h: 1.41, spark: "0,26 16,24 32,23 48,22 64,18 80,16 96,14 112,12" },
   USDC: { verified: true, tradable: true, mcap: "$35.1B", volume24h: "$7.1B", change24h: 0.01, spark: "0,20 16,20 32,20 48,19 64,20 80,20 96,19 112,20" },
   AERO: { verified: true, tradable: true, mcap: "$2.1B", volume24h: "$182M", change24h: 4.32, spark: "0,36 16,34 32,32 48,28 64,24 80,20 96,16 112,10" },
   DEGEN: { verified: false, tradable: true, mcap: "$210M", volume24h: "$52M", change24h: -2.14, spark: "0,14 16,16 32,17 48,20 64,24 80,23 96,27 112,30" },
   BRETT: { verified: false, tradable: true, mcap: "$1.3B", volume24h: "$144M", change24h: 3.48, spark: "0,35 16,34 32,30 48,27 64,24 80,20 96,16 112,13" },
   ZORA: { verified: true, tradable: true, mcap: "$370M", volume24h: "$12M", change24h: 2.41, spark: "0,32 16,31 32,30 48,29 64,24 80,20 96,16 112,12" }
 };
-const OFFICIAL_LISTING_SYMBOLS = new Set(["ETH", "USDC", "AERO", "ZORA"]);
+const OFFICIAL_LISTING_SYMBOLS = new Set(["ETH", "USDC", "AERO", "ZORA", "CBBTC", "WELL"]);
 const UNOFFICIAL_LISTING_MIN_TRADES = 5;
 
 const ENABLE_REAL_ONCHAIN = process.env.NODE_ENV === "test" ? false : process.env.ENABLE_REAL_ONCHAIN === "true";
@@ -956,9 +962,65 @@ function buildFeaturedTokenSections() {
     .filter(Boolean);
 
   return {
-    popular: pick(["ETH", "USDC", "AERO", "ZORA"]),
+    popular: pick(["ETH", "USDC", "CBBTC", "AERO", "WELL", "ZORA"]),
     meme: pick(["BRETT", "DEGEN", "ZORA"])
   };
+}
+
+function formatUsdCompact(value) {
+  const n = Number(value || 0);
+  if (!(n > 0)) return "-";
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
+async function fetchDexBaseSearch(q) {
+  const query = String(q || "").trim();
+  if (!query) return [];
+  try {
+    const url = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, { headers: { accept: "application/json" } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
+    const mapped = [];
+    const seen = new Set();
+
+    for (const pair of pairs) {
+      if (String(pair?.chainId || "").toLowerCase() !== "base") continue;
+      const baseToken = pair?.baseToken || {};
+      const address = String(baseToken?.address || "").toLowerCase();
+      const symbol = String(baseToken?.symbol || "").toUpperCase();
+      if (!address || !symbol || seen.has(address)) continue;
+      seen.add(address);
+
+      mapped.push({
+        symbol,
+        name: String(baseToken?.name || symbol),
+        contract: address,
+        decimals: 18,
+        price: Number(pair?.priceUsd || 0) || 0,
+        verified: false,
+        tradable: true,
+        mcap: formatUsdCompact(pair?.fdv || pair?.marketCap || 0),
+        volume24h: formatUsdCompact(pair?.volume?.h24 || 0),
+        change24h: Number(pair?.priceChange?.h24 || 0) || 0,
+        spark: "0,20 16,20 32,20 48,20 64,20 80,20 96,20 112,20",
+        appTrades: 0,
+        listingStatus: "none",
+        isOfficialListing: false,
+        isUnofficialListing: false,
+        source: "dexscreener"
+      });
+      if (mapped.length >= 20) break;
+    }
+
+    return mapped;
+  } catch {
+    return [];
+  }
 }
 
 function buildTokenLeaderboard(symbol, { limit = 6 } = {}) {
@@ -2307,6 +2369,17 @@ const server = createServer(async (req, res) => {
           t.name.toLowerCase().includes(q) ||
           t.contract.toLowerCase().includes(q)
         );
+
+    if (q) {
+      const dexItems = await fetchDexBaseSearch(q);
+      const byContract = new Map(items.map((t) => [String(t.contract || "").toLowerCase(), t]));
+      dexItems.forEach((t) => {
+        const key = String(t.contract || "").toLowerCase();
+        if (!key || byContract.has(key)) return;
+        byContract.set(key, t);
+      });
+      items = Array.from(byContract.values());
+    }
 
     if (listedOnly) items = items.filter((t) => t.listingStatus !== "none");
     items = items.sort((a, b) => {

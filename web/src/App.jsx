@@ -208,6 +208,11 @@ async function buildLowFeeParams(provider) {
   }
 }
 
+function isPopupOrTimeoutError(err) {
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("wallet_request_timeout") || msg.includes("popup") || msg.includes("blocked");
+}
+
 async function waitForAllowance(provider, token, owner, spender, requiredAmount, timeoutMs = 90000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -470,6 +475,7 @@ export default function App() {
   const [quoteSell, setQuoteSell] = useState(null);
   const [lastApproveTx, setLastApproveTx] = useState("");
   const [lastSwapTx, setLastSwapTx] = useState("");
+  const [pendingSwapReq, setPendingSwapReq] = useState(null);
   const [activeTab, setActiveTab] = useState("home");
   const [tradePanelOpen, setTradePanelOpen] = useState(false);
   const [holderBoard, setHolderBoard] = useState([]);
@@ -1259,12 +1265,24 @@ export default function App() {
       });
       if (swapGas) swapReq.gas = swapGas;
 
-      const swapTx = await providerRequestWithTimeout(provider, {
-        method: "eth_sendTransaction",
-        params: [swapReq]
-      }, 60000);
+      let swapTx;
+      try {
+        swapTx = await providerRequestWithTimeout(provider, {
+          method: "eth_sendTransaction",
+          params: [swapReq]
+        }, 60000);
+      } catch (swapErr) {
+        if (isPopupOrTimeoutError(swapErr)) {
+          setPendingSwapReq(swapReq);
+          setStatus("Approve completed. Tap 'Send Swap' to continue.");
+          setError("swap_popup_not_opened_tap_send_swap");
+          return;
+        }
+        throw swapErr;
+      }
 
       setLastSwapTx(String(swapTx));
+      setPendingSwapReq(null);
       setStatus("Swap submitted. Check status on Basescan.");
       try {
         await waitForReceipt(provider, String(swapTx), 45000);
@@ -1352,6 +1370,37 @@ export default function App() {
       });
     } catch {
       // optional sync endpoint
+    }
+  }
+
+  async function handleSendPendingSwap() {
+    if (!pendingSwapReq) return;
+    setTrading(true);
+    setError("");
+    try {
+      const provider = await getProvider();
+      if (!provider?.request) throw new Error("wallet_provider_unavailable");
+      const swapTx = await providerRequestWithTimeout(provider, {
+        method: "eth_sendTransaction",
+        params: [pendingSwapReq]
+      }, 60000);
+      setLastSwapTx(String(swapTx));
+      setPendingSwapReq(null);
+      setStatus("Swap submitted. Check status on Basescan.");
+      try {
+        await waitForReceipt(provider, String(swapTx), 45000);
+        setStatus("Trade completed successfully.");
+      } catch (receiptErr) {
+        const msg = String(receiptErr?.message || "").toLowerCase();
+        if (!msg.includes("does not support the requested method")) throw receiptErr;
+      }
+    } catch (e) {
+      const msg = String(e?.message || "swap_send_failed");
+      if (msg.includes("wallet_request_timeout")) setError("wallet_request_timeout_open_wallet_popup");
+      else setError(msg);
+      setStatus("");
+    } finally {
+      setTrading(false);
     }
   }
 
@@ -1606,6 +1655,11 @@ export default function App() {
                     {trading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     {trading ? "Processing..." : tradeButtonLabel}
                   </Button>
+                  {pendingSwapReq ? (
+                    <Button className="w-full" variant="secondary" onClick={handleSendPendingSwap} disabled={trading}>
+                      {trading ? "Sending..." : "Send Swap"}
+                    </Button>
+                  ) : null}
                 </CardContent>
               </Card>
               ) : null}

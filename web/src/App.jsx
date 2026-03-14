@@ -26,6 +26,7 @@ const USDC_FALLBACK = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const UNISWAP_V3_QUOTER_FALLBACK = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a";
 const V3_POOL_FEE_FALLBACK = 500;
+const DEFAULT_TRADE_FEE_BPS = 35;
 
 const ERC20_APPROVE_ABI = [
   {
@@ -410,6 +411,7 @@ export default function App() {
   const [tradeTokenSymbol, setTradeTokenSymbol] = useState("ETH");
   const [tradeTokenAddress, setTradeTokenAddress] = useState(ETH_ADDRESS);
   const [tradeTokenDecimals, setTradeTokenDecimals] = useState(18);
+  const [tradeTokenPrice, setTradeTokenPrice] = useState(0);
   const [slippageMode, setSlippageMode] = useState("1");
   const [customSlippage, setCustomSlippage] = useState("1");
 
@@ -505,12 +507,14 @@ export default function App() {
     const symbol = String(token.symbol || "").toUpperCase();
     const contract = String(token.contract || token.address || "").trim();
     const decimals = Number(token.decimals || 18);
+    const price = Number(token.price || 0);
     if (symbol) {
       setInsightToken(symbol);
       setTradeTokenSymbol(symbol);
     }
     if (contract) setTradeTokenAddress(contract);
     if (Number.isFinite(decimals) && decimals > 0) setTradeTokenDecimals(decimals);
+    setTradeTokenPrice(price > 0 ? price : 0);
     setTradePanelOpen(true);
   }
 
@@ -584,7 +588,29 @@ export default function App() {
         const out = await getJson(`/api/trade/quote?${params.toString()}`);
         if (!cancelled) setQuoteSell(out.quote || null);
       } catch {
-        if (!cancelled) setQuoteSell(null);
+        if (!cancelled) {
+          if (tradeTokenPrice > 0) {
+            const grossUsdc = n * tradeTokenPrice;
+            const feeUsdc = (grossUsdc * DEFAULT_TRADE_FEE_BPS) / 10000;
+            const outUsdc = Math.max(0, grossUsdc - feeUsdc);
+            setQuoteSell({
+              token: tradeTokenSymbol,
+              side: "SELL",
+              price: tradeTokenPrice,
+              feeBps: DEFAULT_TRADE_FEE_BPS,
+              feeUsdc,
+              inputUsdc: grossUsdc,
+              netUsdc: outUsdc,
+              outTokenAmount: n,
+              outUsdc,
+              slippageBps,
+              expiresInSec: 10,
+              source: "local_fallback"
+            });
+          } else {
+            setQuoteSell(null);
+          }
+        }
       }
     }
 
@@ -592,7 +618,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [ethAmount, slippageBps, currentUserId, tradeTokenSymbol]);
+  }, [ethAmount, slippageBps, currentUserId, tradeTokenSymbol, tradeTokenPrice]);
 
   useEffect(() => {
     let cancelled = false;
@@ -961,6 +987,7 @@ export default function App() {
     try {
       if (!walletAddress) throw new Error("wallet_not_connected");
       if (!routerAddress) throw new Error("user_router_not_configured");
+      if (!tradeTokenAddress) throw new Error("token_not_selected");
 
       const provider = await getProvider();
       if (!provider?.request) throw new Error("wallet_provider_unavailable");
@@ -986,6 +1013,9 @@ export default function App() {
         tokenOut = usdcAddress;
         amountInRaw = parseUnits(nEth.toFixed(6), tradeTokenDecimals);
         minOutRaw = parseUnits(sellModel.minOutUsdc.toFixed(6), 6);
+      }
+      if (String(tokenIn || "").toLowerCase() === String(tokenOut || "").toLowerCase()) {
+        throw new Error("same_token_pair_not_allowed");
       }
 
       if (venue === "v3") {

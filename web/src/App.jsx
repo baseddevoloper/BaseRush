@@ -215,6 +215,22 @@ async function quoteV3ExactIn(provider, quoterAddress, tokenIn, tokenOut, amount
   }
 }
 
+function appendBuilderDataSuffix(calldata, suffix) {
+  const data = String(calldata || "").trim();
+  if (!data) return data;
+  const rawSuffix = String(suffix || "").trim();
+  if (!rawSuffix) return data;
+  const normalizedData = data.startsWith("0x") ? data : `0x${data}`;
+  const normalizedSuffix = rawSuffix.startsWith("0x") ? rawSuffix : `0x${rawSuffix}`;
+  if (!/^0x[0-9a-fA-F]+$/.test(normalizedData)) return normalizedData;
+  if (!/^0x[0-9a-fA-F]+$/.test(normalizedSuffix)) return normalizedData;
+  const body = normalizedData.slice(2);
+  const suffixBody = normalizedSuffix.slice(2);
+  if (!suffixBody) return normalizedData;
+  if (body.toLowerCase().endsWith(suffixBody.toLowerCase())) return normalizedData;
+  return `0x${body}${suffixBody}`;
+}
+
 export default function App() {
   const { address: wagmiAddress, isConnected: wagmiConnected } = useAccount();
 
@@ -243,6 +259,7 @@ export default function App() {
 
   const usdcAddress = useMemo(() => String(onchainConfig?.usdcDeposit?.tokenAddress || USDC_FALLBACK), [onchainConfig]);
   const routerAddress = useMemo(() => String(onchainConfig?.userRouterAddress || "").trim(), [onchainConfig]);
+  const builderDataSuffix = useMemo(() => String(onchainConfig?.builderDataSuffix || "").trim(), [onchainConfig]);
   const v3QuoterAddress = useMemo(
     () => String(onchainConfig?.uniswapV3?.quoter || UNISWAP_V3_QUOTER_FALLBACK).trim(),
     [onchainConfig]
@@ -551,7 +568,7 @@ export default function App() {
           const approveReq = {
             from: walletAddress,
             to: tokenIn,
-            data: approveData,
+            data: appendBuilderDataSuffix(approveData, builderDataSuffix),
             value: "0x0"
           };
           const approveGas = await estimateGasWithBuffer(provider, approveReq, {
@@ -628,7 +645,7 @@ export default function App() {
       const swapReq = {
         from: walletAddress,
         to: routerAddress,
-        data: swapData,
+        data: appendBuilderDataSuffix(swapData, builderDataSuffix),
         value: txValue
       };
       const minSwapGas = venue === "v4" ? 280000n : side === "SELL" ? 200000n : 180000n;

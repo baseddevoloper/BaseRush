@@ -2257,6 +2257,7 @@ const server = createServer(async (req, res) => {
         argsTemplate: TRADE_EXECUTOR_ARGS_TEMPLATE,
         builderCode: BUILDER_CODE || null,
         builderSuffixConfigured: !!BUILDER_DATA_SUFFIX,
+        builderDataSuffix: BUILDER_DATA_SUFFIX || null,
         usdcDeposit: {
           tokenAddress: USDC_BASE_ADDRESS || null,
           receiverAddress: USDC_DEPOSIT_RECEIVER || null,

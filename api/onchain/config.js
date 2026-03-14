@@ -1,3 +1,5 @@
+import { Attribution } from "ox/erc8021";
+
 function asBool(v) {
   return String(v || "").toLowerCase() === "true";
 }
@@ -34,6 +36,16 @@ export default async function handler(req, res) {
   const USDC_BASE_ADDRESS = (process.env.USDC_BASE_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").trim();
   const USDC_DEPOSIT_RECEIVER = (process.env.USDC_DEPOSIT_RECEIVER || process.env.FEE_TREASURY_ADDRESS || "").trim();
   const BUILDER_CODE = process.env.BUILDER_CODE || "bc_g19kvpy7";
+  const BUILDER_DATA_SUFFIX = (() => {
+    const raw = String(process.env.BUILDER_DATA_SUFFIX || "").trim();
+    if (raw) return raw.startsWith("0x") ? raw : "0x" + raw;
+    try {
+      if (!BUILDER_CODE) return "";
+      return Attribution.toDataSuffix({ codes: [BUILDER_CODE] });
+    } catch {
+      return "";
+    }
+  })();
 
   let abiEntries = 1;
   try {
@@ -51,7 +63,7 @@ export default async function handler(req, res) {
     // keep default
   }
 
-  const builderSuffixConfigured = !!String(process.env.BUILDER_DATA_SUFFIX || "").trim() || !!BUILDER_CODE;
+  const builderSuffixConfigured = !!BUILDER_DATA_SUFFIX;
 
   res.status(200).json({
     ok: true,
@@ -82,6 +94,7 @@ export default async function handler(req, res) {
       argsTemplate,
       builderCode: BUILDER_CODE || null,
       builderSuffixConfigured,
+      builderDataSuffix: BUILDER_DATA_SUFFIX || null,
       usdcDeposit: {
         tokenAddress: USDC_BASE_ADDRESS || null,
         receiverAddress: USDC_DEPOSIT_RECEIVER || null,

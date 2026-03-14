@@ -22,6 +22,7 @@ import { Input } from "./components/ui/input";
 import { Badge } from "./components/ui/badge";
 
 const ETH_ADDRESS = "0x4200000000000000000000000000000000000006";
+const ETH_USD_FALLBACK = 3500;
 const USDC_FALLBACK = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const UNISWAP_V3_QUOTER_FALLBACK = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a";
@@ -469,6 +470,7 @@ export default function App() {
   const [tradeTokenAddress, setTradeTokenAddress] = useState(ETH_ADDRESS);
   const [tradeTokenDecimals, setTradeTokenDecimals] = useState(18);
   const [tradeTokenPrice, setTradeTokenPrice] = useState(0);
+  const [routeMode, setRouteMode] = useState("USDC");
   const [slippageMode, setSlippageMode] = useState("1");
   const [customSlippage, setCustomSlippage] = useState("1");
 
@@ -560,6 +562,13 @@ export default function App() {
     return rows;
   }, [featuredTokens, featuredTab, trendFilter]);
 
+  const ethUsdPrice = useMemo(() => {
+    const fromFeatured = [...(featuredTokens?.popular || []), ...(featuredTokens?.meme || [])]
+      .find((t) => String(t.symbol || "").toUpperCase() === "ETH");
+    const p = Number(fromFeatured?.price || 0);
+    return p > 0 ? p : ETH_USD_FALLBACK;
+  }, [featuredTokens]);
+
   function selectTradeToken(token) {
     if (!token) return;
     const symbol = String(token.symbol || "").toUpperCase();
@@ -573,6 +582,7 @@ export default function App() {
     if (contract) setTradeTokenAddress(contract);
     if (Number.isFinite(decimals) && decimals > 0) setTradeTokenDecimals(decimals);
     setTradeTokenPrice(price > 0 ? price : 0);
+    setRouteMode("USDC");
     setTradePanelOpen(true);
   }
 
@@ -1098,6 +1108,7 @@ export default function App() {
       const selectedIsNative = String(tradeTokenAddress || "").toLowerCase() === ETH_ADDRESS.toLowerCase();
       // Prefer v3 for lower gas cost; we can add smart price routing later.
       const autoVenue = "v3";
+      let useEthRoute = false;
 
       if (side === "BUY") {
         if (!buyModel) throw new Error("quote_missing_for_buy");
@@ -1115,6 +1126,41 @@ export default function App() {
       if (String(tokenIn || "").toLowerCase() === String(tokenOut || "").toLowerCase()) {
         throw new Error("same_token_pair_not_allowed");
       }
+
+      // Hybrid routing:
+      // 1) Try direct USDC route
+      // 2) If no quote/pool, fallback to ETH route
+      if (!selectedIsNative) {
+        const directQuote = await quoteV3ExactIn(provider, v3QuoterAddress, tokenIn, tokenOut, amountInRaw, v3PoolFee);
+        if (!directQuote || directQuote <= 0n) {
+          useEthRoute = true;
+          if (side === "BUY") {
+            tokenIn = ETH_ADDRESS;
+            tokenOut = tradeTokenAddress;
+            const ethAmount = nInput / Math.max(1, Number(ethUsdPrice || ETH_USD_FALLBACK));
+            amountInRaw = parseUnits(ethAmount.toFixed(6), 18);
+            const quoteEthToToken = await quoteV3ExactIn(provider, v3QuoterAddress, tokenIn, tokenOut, amountInRaw, v3PoolFee);
+            if (quoteEthToToken && quoteEthToToken > 0n) {
+              const bps = BigInt(Math.max(1, 10000 - slippageBps));
+              minOutRaw = (quoteEthToToken * bps) / 10000n;
+            } else {
+              minOutRaw = 0n;
+            }
+          } else {
+            tokenIn = tradeTokenAddress;
+            tokenOut = ETH_ADDRESS;
+            amountInRaw = parseUnits(nInput.toFixed(6), tradeTokenDecimals);
+            const quoteTokenToEth = await quoteV3ExactIn(provider, v3QuoterAddress, tokenIn, tokenOut, amountInRaw, v3PoolFee);
+            if (quoteTokenToEth && quoteTokenToEth > 0n) {
+              const bps = BigInt(Math.max(1, 10000 - slippageBps));
+              minOutRaw = (quoteTokenToEth * bps) / 10000n;
+            } else {
+              minOutRaw = 0n;
+            }
+          }
+        }
+      }
+      setRouteMode(useEthRoute ? "ETH" : "USDC");
 
       if (autoVenue === "v3") {
         setStatus("Fetching onchain quote...");
@@ -1141,7 +1187,7 @@ export default function App() {
       }
 
       let needsApprove = false;
-      if (side === "BUY" || (side === "SELL" && !selectedIsNative)) {
+      if ((side === "BUY" && !useEthRoute) || (side === "SELL" && !selectedIsNative)) {
         let currentAllowance = 0n;
         try {
           const allowanceCallData = encodeFunctionData({
@@ -1218,7 +1264,23 @@ export default function App() {
       let swapData;
       let txValue = "0x0";
 
-      if (side === "SELL" && selectedIsNative) {
+      if (side === "BUY" && useEthRoute) {
+        txValue = `0x${amountInRaw.toString(16)}`;
+        if (autoVenue === "v4") {
+          const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
+          swapData = encodeFunctionData({
+            abi: USER_TRADE_ROUTER_ABI,
+            functionName: "swapUserNativeToTokenViaUniversalRouter",
+            args: [tokenOut, minOutRaw, walletAddress, v4Payload.commands, v4Payload.inputs, v4Payload.deadline]
+          });
+        } else {
+          swapData = encodeFunctionData({
+            abi: USER_TRADE_ROUTER_ABI,
+            functionName: "swapUserNativeToToken",
+            args: [tokenOut, minOutRaw, walletAddress]
+          });
+        }
+      } else if (side === "SELL" && selectedIsNative) {
         txValue = `0x${amountInRaw.toString(16)}`;
         if (autoVenue === "v4") {
           const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
@@ -1558,7 +1620,7 @@ export default function App() {
                   </div>
 
                   <div className="rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-xs text-zinc-400">
-                    Routing: Auto (best available path)
+                    Routing: Auto ({routeMode} path)
                   </div>
 
                   <div className="space-y-2">

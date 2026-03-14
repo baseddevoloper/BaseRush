@@ -1791,8 +1791,8 @@ export default function App() {
                       <span>{miniAppDetected ? "Injected" : "Not detected"}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-zinc-400">USDC</span>
-                      <span>{shortAddr(usdcAddress)}</span>
+                      <span className="text-zinc-400">USDC balance</span>
+                      <span>{Number(walletSummary?.wallet?.usdc || 0).toFixed(2)} USDC</span>
                     </div>
                   </div>
 

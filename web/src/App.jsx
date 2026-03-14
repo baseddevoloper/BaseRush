@@ -339,7 +339,7 @@ function mapTradeEventsToFeedVM(feedItems) {
   }));
 }
 
-function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProfile, currentUserId, miniAppUser }) {
+function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProfile, currentUserId, miniAppUser, customBio }) {
   const wallet = walletSummary?.wallet || {};
   const myFeed = (feedItems || []).filter((x) => x.userId === currentUserId);
   const wins = myFeed.filter((x) => Number(x.pnl || 0) >= 0).length;
@@ -374,7 +374,7 @@ function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProf
     handle: socialProfile?.handle || (walletAddress ? `@${shortAddr(walletAddress)}` : "@guest"),
     displayName: socialProfile?.displayName || miniAppUser?.displayName || miniAppUser?.username || socialProfile?.handle?.replace(/^@/, "") || "BaseRush User",
     avatarUrl: socialProfile?.avatarUrl || miniAppUser?.pfpUrl || "",
-    bio: socialProfile?.bio || "Base network social trader profile",
+    bio: customBio || socialProfile?.bio || "Base network social trader profile",
     verified: socialProfile?.verified || { farcaster: false, baseapp: false, twitter: false },
     totalTrades: Number(walletSummary?.recentTrades?.length || total || 0),
     followers: Number(socialProfile?.socialGraph?.appFollowers || 0),
@@ -407,6 +407,9 @@ export default function App() {
   const [side, setSide] = useState("BUY");
   const [venue, setVenue] = useState("v3");
   const [ethAmount, setEthAmount] = useState("0.01");
+  const [tradeTokenSymbol, setTradeTokenSymbol] = useState("ETH");
+  const [tradeTokenAddress, setTradeTokenAddress] = useState(ETH_ADDRESS);
+  const [tradeTokenDecimals, setTradeTokenDecimals] = useState(18);
   const [slippageMode, setSlippageMode] = useState("1");
   const [customSlippage, setCustomSlippage] = useState("1");
 
@@ -419,6 +422,7 @@ export default function App() {
   const [onchainPnl, setOnchainPnl] = useState(null);
   const [featuredTokens, setFeaturedTokens] = useState({ popular: [], meme: [] });
   const [featuredTab, setFeaturedTab] = useState("popular");
+  const [trendFilter, setTrendFilter] = useState("all");
   const [insightToken, setInsightToken] = useState("ETH");
   const [tokenQuery, setTokenQuery] = useState("");
   const [searchTokens, setSearchTokens] = useState([]);
@@ -432,6 +436,9 @@ export default function App() {
   const [followingIds, setFollowingIds] = useState([]);
   const [newTradesCount, setNewTradesCount] = useState(0);
   const [socialProfile, setSocialProfile] = useState(null);
+  const [editingBio, setEditingBio] = useState(false);
+  const [bioDraft, setBioDraft] = useState("");
+  const [customBio, setCustomBio] = useState("");
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -483,6 +490,29 @@ export default function App() {
       minOutUsdc
     };
   }, [ethAmount, quoteSell, slippagePct]);
+
+  const tokenAmountLabel = tradeTokenSymbol || "Token";
+
+  const filteredMarketTokens = useMemo(() => {
+    const rows = Array.isArray(featuredTokens?.[featuredTab]) ? [...featuredTokens[featuredTab]] : [];
+    if (trendFilter === "rising") return rows.filter((x) => Number(x.change24h || 0) >= 0);
+    if (trendFilter === "falling") return rows.filter((x) => Number(x.change24h || 0) < 0);
+    return rows;
+  }, [featuredTokens, featuredTab, trendFilter]);
+
+  function selectTradeToken(token) {
+    if (!token) return;
+    const symbol = String(token.symbol || "").toUpperCase();
+    const contract = String(token.contract || token.address || "").trim();
+    const decimals = Number(token.decimals || 18);
+    if (symbol) {
+      setInsightToken(symbol);
+      setTradeTokenSymbol(symbol);
+    }
+    if (contract) setTradeTokenAddress(contract);
+    if (Number.isFinite(decimals) && decimals > 0) setTradeTokenDecimals(decimals);
+    setTradePanelOpen(true);
+  }
 
   async function getProvider() {
     try {
@@ -543,7 +573,7 @@ export default function App() {
       }
 
       const params = new URLSearchParams({
-        token: "ETH",
+        token: tradeTokenSymbol,
         side: "SELL",
         tokenAmount: String(n),
         userId: currentUserId,
@@ -562,7 +592,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [ethAmount, slippageBps, currentUserId]);
+  }, [ethAmount, slippageBps, currentUserId, tradeTokenSymbol]);
 
   useEffect(() => {
     let cancelled = false;
@@ -675,6 +705,20 @@ export default function App() {
       cancelled = true;
     };
   }, [walletAddress, currentUserId, authToken]);
+
+  useEffect(() => {
+    const key = `baserush.bio.${(walletAddress || currentUserId || "guest").toLowerCase()}`;
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved) setCustomBio(saved);
+    } catch {
+      // ignore
+    }
+  }, [walletAddress, currentUserId]);
+
+  useEffect(() => {
+    setBioDraft(customBio || socialProfile?.bio || "");
+  }, [customBio, socialProfile?.bio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -928,18 +972,19 @@ export default function App() {
       let tokenOut;
       let amountInRaw;
       let minOutRaw;
+      const selectedIsNative = String(tradeTokenAddress || "").toLowerCase() === ETH_ADDRESS.toLowerCase();
 
       if (side === "BUY") {
         if (!buyModel) throw new Error("quote_missing_for_buy");
         tokenIn = usdcAddress;
-        tokenOut = ETH_ADDRESS;
+        tokenOut = tradeTokenAddress || ETH_ADDRESS;
         amountInRaw = parseUnits(buyModel.requiredUsdc.toFixed(6), 6);
-        minOutRaw = parseUnits(buyModel.minOutEth.toFixed(6), 18);
+        minOutRaw = parseUnits(buyModel.minOutEth.toFixed(6), tradeTokenDecimals);
       } else {
         if (!sellModel) throw new Error("quote_missing_for_sell");
-        tokenIn = ETH_ADDRESS;
+        tokenIn = tradeTokenAddress || ETH_ADDRESS;
         tokenOut = usdcAddress;
-        amountInRaw = parseUnits(nEth.toFixed(6), 18);
+        amountInRaw = parseUnits(nEth.toFixed(6), tradeTokenDecimals);
         minOutRaw = parseUnits(sellModel.minOutUsdc.toFixed(6), 6);
       }
 
@@ -968,7 +1013,7 @@ export default function App() {
       }
 
       let needsApprove = false;
-      if (side === "BUY") {
+      if (side === "BUY" || (side === "SELL" && !selectedIsNative)) {
         let currentAllowance = 0n;
         try {
           const allowanceCallData = encodeFunctionData({
@@ -1036,16 +1081,16 @@ export default function App() {
 
       setStatus(
         needsApprove
-          ? "Step 2/2: Swap to ETH..."
+          ? `Step 2/2: Swap to ${tradeTokenSymbol}...`
           : side === "BUY"
-            ? "Step 1/1: Swap to ETH..."
-            : "Step 1/1: Sell ETH..."
+            ? `Step 1/1: Buy ${tradeTokenSymbol}...`
+            : `Step 1/1: Sell ${tradeTokenSymbol}...`
       );
 
       let swapData;
       let txValue = "0x0";
 
-      if (side === "SELL") {
+      if (side === "SELL" && selectedIsNative) {
         txValue = `0x${amountInRaw.toString(16)}`;
         if (venue === "v4") {
           const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
@@ -1082,7 +1127,7 @@ export default function App() {
         data: appendBuilderDataSuffix(swapData, builderDataSuffix),
         value: txValue
       };
-      const minSwapGas = venue === "v4" ? 280000n : side === "SELL" ? 200000n : 180000n;
+      const minSwapGas = venue === "v4" ? 280000n : side === "SELL" ? 220000n : 180000n;
       const swapGas = await estimateGasWithBuffer(provider, swapReq, {
         bufferBps: 3000,
         minGas: minSwapGas,
@@ -1112,7 +1157,7 @@ export default function App() {
     }
   }
 
-  const tradeButtonLabel = useMemo(() => (side === "BUY" ? "Buy ETH" : "Sell ETH"), [side]);
+  const tradeButtonLabel = useMemo(() => (side === "BUY" ? `Buy ${tradeTokenSymbol}` : `Sell ${tradeTokenSymbol}`), [side, tradeTokenSymbol]);
   const quoteReady = side === "BUY" ? !!buyModel : !!sellModel;
   const canTrade = walletConnected && !trading && !!routerAddress && quoteReady;
   const homeVM = useMemo(
@@ -1125,8 +1170,8 @@ export default function App() {
   );
   const feedVM = useMemo(() => mapTradeEventsToFeedVM(feedItems), [feedItems]);
   const profileVM = useMemo(
-    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress, socialProfile, currentUserId, miniAppUser }),
-    [walletSummary, globalFeedItems, walletAddress, socialProfile, currentUserId, miniAppUser]
+    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress, socialProfile, currentUserId, miniAppUser, customBio }),
+    [walletSummary, globalFeedItems, walletAddress, socialProfile, currentUserId, miniAppUser, customBio]
   );
 
   const filteredFriends = useMemo(() => {
@@ -1152,6 +1197,32 @@ export default function App() {
       setFollowingIds(Array.isArray(g?.following) ? g.following : []);
     } catch {
       // non-blocking on UI
+    }
+  }
+
+  async function handleSaveBio() {
+    const value = String(bioDraft || "").trim().slice(0, 180);
+    setCustomBio(value);
+    setEditingBio(false);
+    const key = `baserush.bio.${(walletAddress || currentUserId || "guest").toLowerCase()}`;
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // ignore
+    }
+    try {
+      await fetch("/api/social/profile/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          userId: currentUserId,
+          profile: {
+            bio: value
+          }
+        })
+      });
+    } catch {
+      // optional sync endpoint
     }
   }
 
@@ -1214,7 +1285,7 @@ export default function App() {
                       <button
                         key={t.symbol}
                         type="button"
-                        onClick={() => setInsightToken(t.symbol)}
+                        onClick={() => selectTradeToken(t)}
                         className={`w-full rounded-2xl border px-3 py-2 text-left transition-all ${insightToken === t.symbol ? "border-violet-400/70 bg-violet-500/20 shadow-[0_12px_36px_-16px_rgba(167,139,250,0.95)]" : "border-white/15 bg-black/30 hover:border-white/30"}`}
                       >
                         <div className="flex items-center justify-between">
@@ -1256,12 +1327,23 @@ export default function App() {
                       Meme
                     </Button>
                   </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button size="sm" variant={trendFilter === "all" ? "default" : "outline"} onClick={() => setTrendFilter("all")}>
+                      All
+                    </Button>
+                    <Button size="sm" variant={trendFilter === "rising" ? "default" : "outline"} onClick={() => setTrendFilter("rising")}>
+                      Rising
+                    </Button>
+                    <Button size="sm" variant={trendFilter === "falling" ? "default" : "outline"} onClick={() => setTrendFilter("falling")}>
+                      Falling
+                    </Button>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {(featuredTokens?.[featuredTab] || []).map((t) => (
+                    {(filteredMarketTokens || []).map((t) => (
                       <button
                         key={t.symbol}
                         type="button"
-                        onClick={() => setInsightToken(t.symbol)}
+                        onClick={() => selectTradeToken(t)}
                         className={`rounded-2xl border px-3 py-2 text-left transition-all ${insightToken === t.symbol ? "border-violet-400/70 bg-violet-500/20 shadow-[0_12px_36px_-16px_rgba(167,139,250,0.95)]" : "border-white/15 bg-black/30 hover:border-white/30"}`}
                       >
                         <p className="text-sm font-medium">{t.symbol}</p>
@@ -1293,15 +1375,18 @@ export default function App() {
                 <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Quick Trade</CardTitle>
-                  <CardDescription>Fast buy/sell flow from your connected wallet.</CardDescription>
+                  <CardDescription>{tradeTokenSymbol} quick buy/sell from connected wallet.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-5">
+                  <div className="rounded-xl border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs">
+                    Selected token: <span className="font-semibold">{tradeTokenSymbol}</span>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <Button variant={side === "BUY" ? "default" : "outline"} onClick={() => setSide("BUY")} disabled={trading}>
-                      Buy ETH
+                      Buy {tradeTokenSymbol}
                     </Button>
                     <Button variant={side === "SELL" ? "default" : "outline"} onClick={() => setSide("SELL")} disabled={trading}>
-                      Sell ETH
+                      Sell {tradeTokenSymbol}
                     </Button>
                   </div>
 
@@ -1319,7 +1404,7 @@ export default function App() {
                   </div>
 
                   <div className="space-y-2">
-                    <p className="mb-1 text-xs text-zinc-400">ETH Amount</p>
+                    <p className="mb-1 text-xs text-zinc-400">{tokenAmountLabel} Amount</p>
                     <Input
                       className="h-11 rounded-xl border-white/15 bg-black/35"
                       type="number"
@@ -1376,7 +1461,7 @@ export default function App() {
                       <span className="text-zinc-400">Pair</span>
                       <span className="inline-flex items-center gap-1">
                         <ArrowDownUp className="h-3.5 w-3.5" />
-                        {side === "BUY" ? "USDC -> ETH" : "ETH -> USDC"}
+                        {side === "BUY" ? `USDC -> ${tradeTokenSymbol}` : `${tradeTokenSymbol} -> USDC`}
                       </span>
                     </div>
                     {side === "BUY" ? (
@@ -1395,7 +1480,7 @@ export default function App() {
                       <span>
                         {side === "BUY"
                           ? buyModel
-                            ? `${buyModel.minOutEth.toFixed(6)} ETH`
+                            ? `${buyModel.minOutEth.toFixed(6)} ${tradeTokenSymbol}`
                             : "-"
                           : sellModel
                             ? `${sellModel.minOutUsdc.toFixed(2)} USDC`
@@ -1588,7 +1673,30 @@ export default function App() {
                     </div>
                     <div>
                       <CardTitle className="text-lg">{profileVM.displayName}</CardTitle>
-                      <CardDescription>{profileVM.bio}</CardDescription>
+                      {editingBio ? (
+                        <div className="mt-2 space-y-2">
+                          <textarea
+                            className="w-full rounded-xl border border-white/20 bg-black/35 px-2 py-1.5 text-xs text-zinc-100 outline-none"
+                            rows={3}
+                            value={bioDraft}
+                            onChange={(e) => setBioDraft(e.target.value)}
+                            placeholder="Write your bio..."
+                          />
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={handleSaveBio}>Save Bio</Button>
+                            <Button size="sm" variant="outline" onClick={() => { setEditingBio(false); setBioDraft(profileVM.bio || ""); }}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-1">
+                          <CardDescription>{profileVM.bio}</CardDescription>
+                          <Button size="sm" variant="outline" className="mt-2" onClick={() => setEditingBio(true)}>
+                            Edit Bio
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </CardHeader>

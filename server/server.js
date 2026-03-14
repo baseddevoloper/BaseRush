@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { parseWebhookEvent, verifyAppKeyWithNeynar } from "@farcaster/miniapp-node";
 import { createClient as createQuickAuthClient } from "@farcaster/quick-auth";
 import { readFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
@@ -24,6 +25,8 @@ const db = {
   webhookReplay: new Map(),
   deposits: new Map()
 };
+const PROFILE_DB_DIR = path.resolve(root, "cache");
+const PROFILE_DB_FILE = path.resolve(PROFILE_DB_DIR, "profiles.json");
 
 const TOKEN_REGISTRY = {
   "0x4200000000000000000000000000000000000006": { symbol: "ETH", name: "Ethereum", contract: "0x4200000000000000000000000000000000000006", decimals: 18 },
@@ -397,11 +400,49 @@ function toPublicOnchainOperation(operation) {
       : []
   };
 }
+
+function persistProfilesToDisk() {
+  try {
+    if (!existsSync(PROFILE_DB_DIR)) mkdirSync(PROFILE_DB_DIR, { recursive: true });
+    const payload = {};
+    db.users.forEach((user, userId) => {
+      payload[userId] = {
+        auth: user.auth || { provider: "guest", fid: null, address: null, username: null },
+        profile: user.profile || null
+      };
+    });
+    writeFileSync(PROFILE_DB_FILE, JSON.stringify(payload, null, 2), "utf8");
+  } catch {
+    // ignore persistence errors
+  }
+}
+
+function hydrateProfilesFromDisk() {
+  try {
+    if (!existsSync(PROFILE_DB_FILE)) return;
+    const raw = readFileSync(PROFILE_DB_FILE, "utf8");
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") return;
+    Object.entries(data).forEach(([userId, row]) => {
+      const current = getOrCreateUser(userId);
+      if (row?.auth && typeof row.auth === "object") {
+        current.auth = { ...current.auth, ...row.auth };
+      }
+      if (row?.profile && typeof row.profile === "object") {
+        current.profile = { ...(current.profile || {}), ...row.profile };
+      }
+    });
+  } catch {
+    // ignore hydration errors
+  }
+}
+
 function getOrCreateUser(userId) {
   if (!db.users.has(userId)) {
     db.users.set(userId, {
       userId,
       auth: { provider: "guest", fid: null, address: null, username: null },
+      profile: { displayName: null, pfpUrl: null, bio: null, verified: { farcaster: false, baseapp: false, twitter: false } },
       wallet: { usdc: 0, feesPaid: 0, realizedPnl: 0 },
       positions: {},
       trades: [],
@@ -607,6 +648,8 @@ function buildWalletSummary(user) {
     recentTrades: user.trades.slice(0, 10)
   };
 }
+
+hydrateProfilesFromDisk();
 
 function toChecksumOrEmpty(addressLike) {
   const raw = String(addressLike || "").trim();
@@ -1802,6 +1845,7 @@ function bindUserToQuickAuth(user, authResult) {
     quickAuthExp: payload.exp || null,
     verifiedAt: new Date().toISOString()
   };
+  persistProfilesToDisk();
 }
 
 function enforceUserQuickAuthBinding(userId, authResult) {
@@ -1976,6 +2020,15 @@ const server = createServer(async (req, res) => {
       quickAuthExp: authResult?.payload?.exp || null,
       verifiedAt: authResult.verified ? new Date().toISOString() : null
     };
+    if (body.displayName || body.pfpUrl || body.bio) {
+      user.profile = {
+        ...(user.profile || {}),
+        displayName: body.displayName || user.profile?.displayName || null,
+        pfpUrl: body.pfpUrl || user.profile?.pfpUrl || null,
+        bio: body.bio || user.profile?.bio || null
+      };
+    }
+    persistProfilesToDisk();
 
     addNotification(userId, `${provider} login success`, { channel: provider, type: "auth" });
     return json(res, 200, { ok: true, user, session: { provider, userId, authVerified: !!authResult.verified } });
@@ -2684,11 +2737,41 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { ok: true, userId, friends: buildFriendsPerformance(userId, limit) });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/social/profile/sync") {
+    const body = await parseBody(req);
+    const userId = String(body.userId || "guest");
+    const user = getOrCreateUser(userId);
+    const profile = body.profile && typeof body.profile === "object" ? body.profile : {};
+
+    if (profile.fid) user.auth.fid = Number(profile.fid) || user.auth.fid || null;
+    if (profile.username) user.auth.username = String(profile.username);
+    if (profile.address) user.auth.address = String(profile.address);
+    user.auth.provider = user.auth.provider || "farcaster";
+
+    user.profile = {
+      ...(user.profile || {}),
+      displayName: profile.displayName || user.profile?.displayName || null,
+      pfpUrl: profile.pfpUrl || user.profile?.pfpUrl || null,
+      bio: profile.bio || user.profile?.bio || null,
+      verified: {
+        farcaster: Boolean(profile?.verified?.farcaster || user.profile?.verified?.farcaster || user.auth?.fid),
+        baseapp: Boolean(profile?.verified?.baseapp || user.profile?.verified?.baseapp || user.auth?.address),
+        twitter: Boolean(profile?.verified?.twitter || user.profile?.verified?.twitter)
+      }
+    };
+
+    persistProfilesToDisk();
+    return json(res, 200, { ok: true, userId, profile: user.profile, auth: user.auth });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/social/profile") {
     const userId = String(url.searchParams.get("userId") || "guest");
     const walletAddress = String(url.searchParams.get("walletAddress") || "").trim();
     const user = getOrCreateUser(userId);
-    if (walletAddress) user.auth.address = walletAddress;
+    if (walletAddress && user.auth.address !== walletAddress) {
+      user.auth.address = walletAddress;
+      persistProfilesToDisk();
+    }
 
     const fid = Number(user?.auth?.fid || 0) || null;
     const remote = await fetchFarcasterProfileByFid(fid);
@@ -2697,17 +2780,27 @@ const server = createServer(async (req, res) => {
       userId,
       fid: remote?.fid || fid,
       handle: remote?.username ? `@${remote.username}` : (user.auth?.username ? `@${user.auth.username}` : `@${userId}`),
-      displayName: remote?.displayName || user.auth?.username || userId,
-      avatarUrl: remote?.avatarUrl || null,
-      bio: remote?.bio || "Base network social trader profile",
+      displayName: remote?.displayName || user.profile?.displayName || user.auth?.username || userId,
+      avatarUrl: remote?.avatarUrl || user.profile?.pfpUrl || null,
+      bio: remote?.bio || user.profile?.bio || "Base network social trader profile",
       walletAddress: user.auth?.address || null,
       verified: {
-        farcaster: Boolean(remote?.verified?.farcaster || fid),
-        baseapp: Boolean(remote?.verified?.baseapp || user.auth?.address),
-        twitter: Boolean(remote?.verified?.twitter)
+        farcaster: Boolean(remote?.verified?.farcaster || user.profile?.verified?.farcaster || fid),
+        baseapp: Boolean(remote?.verified?.baseapp || user.profile?.verified?.baseapp || user.auth?.address),
+        twitter: Boolean(remote?.verified?.twitter || user.profile?.verified?.twitter)
       },
       verifiedAddresses: remote?.verifiedAddresses || []
     };
+
+    user.profile = {
+      ...(user.profile || {}),
+      displayName: profile.displayName,
+      pfpUrl: profile.avatarUrl,
+      bio: profile.bio,
+      verified: profile.verified
+    };
+    if (remote?.username && !user.auth?.username) user.auth.username = remote.username;
+    persistProfilesToDisk();
 
     return json(res, 200, { ok: true, profile });
   }
@@ -2721,7 +2814,10 @@ const server = createServer(async (req, res) => {
     const walletAddress = String(url.searchParams.get("walletAddress") || "").trim();
     const user = getOrCreateUser(userId);
     if (walletAddress) {
-      user.auth.address = walletAddress;
+      if (user.auth.address !== walletAddress) {
+        user.auth.address = walletAddress;
+        persistProfilesToDisk();
+      }
     }
     const summary = buildWalletSummary(user);
     const onchain = await loadOnchainTradeSummaryForWallet(walletAddress || user.auth?.address || "", { limit: 200 });

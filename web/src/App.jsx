@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { sdk } from "@farcaster/miniapp-sdk";
 import {
   ArrowDownUp,
   Bell,
@@ -145,8 +146,8 @@ function sortCurrencies(a, b) {
   return BigInt(a.toLowerCase()) < BigInt(b.toLowerCase()) ? [a, b] : [b, a];
 }
 
-async function getJson(path) {
-  const res = await fetch(path);
+async function getJson(path, init) {
+  const res = await fetch(path, init);
   const data = await res.json();
   if (!res.ok || data?.ok === false) throw new Error(data?.error || "request_failed");
   return data;
@@ -317,9 +318,9 @@ function mapTradeEventsToFeedVM(feedItems) {
   }));
 }
 
-function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProfile }) {
+function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProfile, currentUserId }) {
   const wallet = walletSummary?.wallet || {};
-  const myFeed = (feedItems || []).filter((x) => x.userId === "guest");
+  const myFeed = (feedItems || []).filter((x) => x.userId === currentUserId);
   const wins = myFeed.filter((x) => Number(x.pnl || 0) >= 0).length;
   const total = myFeed.length;
   const winRate = total > 0 ? (wins * 100) / total : 0;
@@ -348,6 +349,8 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [connectedAddress, setConnectedAddress] = useState("");
+  const [currentUserId, setCurrentUserId] = useState("guest");
+  const [authToken, setAuthToken] = useState("");
 
   const [onchainConfig, setOnchainConfig] = useState(null);
 
@@ -493,7 +496,7 @@ export default function App() {
         token: "ETH",
         side: "SELL",
         tokenAmount: String(n),
-        userId: "guest",
+        userId: currentUserId,
         slippageBps: String(slippageBps)
       });
 
@@ -509,7 +512,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [ethAmount, slippageBps]);
+  }, [ethAmount, slippageBps, currentUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -531,9 +534,77 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+
+    async function syncMiniAppIdentity() {
+      try {
+        const ctx = await sdk.context.catch(() => null);
+        const ctxUser = ctx?.user || null;
+        const ctxFid = Number(ctxUser?.fid || 0) || null;
+
+        let token = "";
+        try {
+          const tk = await sdk.quickAuth.getToken();
+          token = String(tk?.token || "");
+        } catch {
+          token = "";
+        }
+        if (!cancelled) setAuthToken(token);
+
+        let authStatus = null;
+        if (token) {
+          try {
+            authStatus = await getJson("/api/auth/status", {
+              headers: { authorization: `Bearer ${token}` }
+            });
+          } catch {
+            authStatus = null;
+          }
+        }
+
+        const resolvedUserId =
+          String(authStatus?.userId || "").trim() ||
+          (ctxFid ? `fc_${ctxFid}` : "guest");
+
+        if (!cancelled) setCurrentUserId(resolvedUserId);
+        if (!cancelled && authStatus?.address && !connectedAddress) {
+          setConnectedAddress(String(authStatus.address));
+        }
+
+        await fetch("/api/social/profile/sync", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            userId: resolvedUserId,
+            profile: {
+              fid: authStatus?.fid || ctxFid,
+              username: ctxUser?.username || null,
+              displayName: ctxUser?.displayName || null,
+              pfpUrl: ctxUser?.pfpUrl || null,
+              address: authStatus?.address || null,
+              verified: {
+                farcaster: Boolean(authStatus?.authVerified || ctxFid),
+                baseapp: Boolean(authStatus?.address),
+                twitter: false
+              }
+            }
+          })
+        }).catch(() => null);
+      } catch {
+        // ignore identity sync errors
+      }
+    }
+
+    syncMiniAppIdentity();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedAddress]);
+
+  useEffect(() => {
+    let cancelled = false;
     async function loadSocialProfile() {
       try {
-        const out = await getJson(`/api/social/profile?userId=guest&walletAddress=${encodeURIComponent(walletAddress || "")}`);
+        const out = await getJson(`/api/social/profile?userId=${encodeURIComponent(currentUserId)}&walletAddress=${encodeURIComponent(walletAddress || "")}`);
         if (!cancelled) setSocialProfile(out?.profile || null);
       } catch {
         if (!cancelled) setSocialProfile(null);
@@ -543,7 +614,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [walletAddress]);
+  }, [walletAddress, currentUserId, authToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -580,7 +651,7 @@ export default function App() {
       }
 
       try {
-        const out = await getJson(`/api/wallet/summary?userId=guest&walletAddress=${encodeURIComponent(walletAddress)}`);
+        const out = await getJson(`/api/wallet/summary?userId=${encodeURIComponent(currentUserId)}&walletAddress=${encodeURIComponent(walletAddress)}`);
         if (!cancelled) setOnchainPnl(out?.onchain?.pnl || null);
       } catch {
         if (!cancelled) setOnchainPnl(null);
@@ -593,7 +664,7 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [walletAddress, lastSwapTx, insightToken]);
+  }, [walletAddress, lastSwapTx, insightToken, currentUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -603,7 +674,7 @@ export default function App() {
         return;
       }
       try {
-        const out = await getJson(`/api/wallet/summary?userId=guest&walletAddress=${encodeURIComponent(walletAddress)}`);
+        const out = await getJson(`/api/wallet/summary?userId=${encodeURIComponent(currentUserId)}&walletAddress=${encodeURIComponent(walletAddress)}`);
         if (!cancelled) setWalletSummary(out || null);
       } catch {
         if (!cancelled) setWalletSummary(null);
@@ -615,13 +686,13 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [walletAddress, lastSwapTx]);
+  }, [walletAddress, lastSwapTx, currentUserId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadFriends() {
       try {
-        const out = await getJson("/api/social/friends?userId=guest&limit=30");
+        const out = await getJson(`/api/social/friends?userId=${encodeURIComponent(currentUserId)}&limit=30`);
         if (!cancelled) setFriendsRows(Array.isArray(out?.friends) ? out.friends : []);
       } catch {
         if (!cancelled) setFriendsRows([]);
@@ -633,14 +704,14 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [currentUserId]);
 
   useEffect(() => {
     let cancelled = false;
     let previousTop = "";
     async function loadFeed() {
       try {
-        const current = await getJson(`/api/feed?userId=guest&scope=${feedScope}&limit=40`);
+        const current = await getJson(`/api/feed?userId=${encodeURIComponent(currentUserId)}&scope=${feedScope}&limit=40`);
         if (cancelled) return;
         const items = Array.isArray(current?.items) ? current.items : [];
         setFeedItems(items);
@@ -661,13 +732,13 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [feedScope]);
+  }, [feedScope, currentUserId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadGlobalFeed() {
       try {
-        const out = await getJson("/api/feed?userId=guest&scope=global&limit=80");
+        const out = await getJson(`/api/feed?userId=${encodeURIComponent(currentUserId)}&scope=global&limit=80`);
         if (!cancelled) setGlobalFeedItems(Array.isArray(out?.items) ? out.items : []);
       } catch {
         if (!cancelled) setGlobalFeedItems([]);
@@ -679,7 +750,7 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [currentUserId]);
 
   async function handleConnectWallet() {
     setConnecting(true);
@@ -991,8 +1062,8 @@ export default function App() {
   );
   const feedVM = useMemo(() => mapTradeEventsToFeedVM(feedItems), [feedItems]);
   const profileVM = useMemo(
-    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress, socialProfile }),
-    [walletSummary, globalFeedItems, walletAddress, socialProfile]
+    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress, socialProfile, currentUserId }),
+    [walletSummary, globalFeedItems, walletAddress, socialProfile, currentUserId]
   );
 
   const filteredFriends = useMemo(() => {
@@ -1010,11 +1081,11 @@ export default function App() {
       await fetch("/api/follow", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ userId: "guest", traderId })
+        body: JSON.stringify({ userId: currentUserId, traderId })
       });
-      const f = await getJson("/api/social/friends?userId=guest&limit=30");
+      const f = await getJson(`/api/social/friends?userId=${encodeURIComponent(currentUserId)}&limit=30`);
       setFriendsRows(Array.isArray(f?.friends) ? f.friends : []);
-      const g = await getJson(`/api/feed?userId=guest&scope=${feedScope}&limit=40`);
+      const g = await getJson(`/api/feed?userId=${encodeURIComponent(currentUserId)}&scope=${feedScope}&limit=40`);
       setFollowingIds(Array.isArray(g?.following) ? g.following : []);
     } catch {
       // non-blocking on UI

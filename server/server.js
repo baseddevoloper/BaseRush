@@ -53,6 +53,7 @@ const ENABLE_REAL_ONCHAIN = process.env.NODE_ENV === "test" ? false : process.en
 const BASE_RPC_URL = process.env.BASE_RPC_URL || "";
 const TRADE_EXECUTOR_ADDRESS = process.env.TRADE_EXECUTOR_ADDRESS || "";
 const USER_TRADE_ROUTER_ADDRESS = process.env.USER_TRADE_ROUTER_ADDRESS || "";
+const ONCHAIN_HISTORY_MAX_BLOCKS = Math.max(5_000, Number(process.env.ONCHAIN_HISTORY_MAX_BLOCKS || 250_000));
 const UNISWAP_V4_UNIVERSAL_ROUTER = process.env.UNISWAP_V4_UNIVERSAL_ROUTER || "";
 const UNISWAP_PERMIT2 = process.env.UNISWAP_PERMIT2 || "";
 const USER_ROUTER_V4_ENABLED = String(process.env.USER_ROUTER_V4_ENABLED || "false").toLowerCase() === "true";
@@ -104,6 +105,9 @@ function loadTradeExecutorAbi() {
 const TRADE_EXECUTOR_ABI = loadTradeExecutorAbi();
 const USDC_ERC20_INTERFACE = new ethers.Interface(["function transfer(address to,uint256 amount)", "event Transfer(address indexed from,address indexed to,uint256 value)"]);
 const USDC_TRANSFER_TOPIC = ethers.id("Transfer(address,address,uint256)");
+const USER_TRADE_ROUTER_INTERFACE = new ethers.Interface([
+  "event UserSwapExecuted(address indexed user,address indexed tokenIn,address indexed tokenOut,uint256 amountIn,uint256 minOut,uint256 amountOut,uint256 feeAmountOut,address recipient,uint8 venue)"
+]);
 const APP_BASE_URL = process.env.APP_BASE_URL || "";
 const FC_FRAME_VERSION = process.env.FC_FRAME_VERSION || "1";
 const FC_FRAME_NAME = process.env.FC_FRAME_NAME || "BaseRush";
@@ -595,6 +599,212 @@ function buildWalletSummary(user) {
     holdings,
     positions,
     recentTrades: user.trades.slice(0, 10)
+  };
+}
+
+function toChecksumOrEmpty(addressLike) {
+  const raw = String(addressLike || "").trim();
+  if (!raw) return "";
+  try {
+    return ethers.getAddress(raw);
+  } catch {
+    return "";
+  }
+}
+
+function unitToNumber(value, decimals) {
+  try {
+    return Number(ethers.formatUnits(value || 0n, Number(decimals || 18)));
+  } catch {
+    return 0;
+  }
+}
+
+function symbolFromAddress(addressLike) {
+  const needle = String(addressLike || "").toLowerCase();
+  const found = Object.values(TOKEN_REGISTRY).find((t) => String(t.contract || "").toLowerCase() === needle);
+  return found?.symbol || "UNKNOWN";
+}
+
+async function loadOnchainTradeSummaryForWallet(walletAddress, { limit = 100 } = {}) {
+  const wallet = toChecksumOrEmpty(walletAddress);
+  if (!wallet || !BASE_RPC_URL || !USER_TRADE_ROUTER_ADDRESS) {
+    return {
+      enabled: false,
+      walletAddress: wallet || null,
+      reason: "onchain_not_configured",
+      trades: [],
+      positions: {},
+      pnl: { realized: 0, unrealized: 0, total: 0 }
+    };
+  }
+
+  const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
+  const router = toChecksumOrEmpty(USER_TRADE_ROUTER_ADDRESS);
+  const usdc = String(USDC_BASE_ADDRESS || "").toLowerCase();
+  const wrapped = String(WRAPPED_NATIVE_TOKEN || "").toLowerCase();
+
+  const latest = await provider.getBlockNumber();
+  const fromBlock = Math.max(0, latest - ONCHAIN_HISTORY_MAX_BLOCKS);
+  const topic0 = ethers.id("UserSwapExecuted(address,address,address,uint256,uint256,uint256,uint256,address,uint8)");
+  const topic1 = ethers.zeroPadValue(wallet, 32);
+  const logs = await provider.getLogs({
+    address: router,
+    fromBlock,
+    toBlock: latest,
+    topics: [topic0, topic1]
+  });
+
+  const parsedRows = [];
+  for (const log of logs) {
+    try {
+      const parsed = USER_TRADE_ROUTER_INTERFACE.parseLog(log);
+      if (!parsed) continue;
+      const tokenIn = String(parsed.args.tokenIn || "").toLowerCase();
+      const tokenOut = String(parsed.args.tokenOut || "").toLowerCase();
+      const amountInRaw = BigInt(parsed.args.amountIn || 0n);
+      const amountOutRaw = BigInt(parsed.args.amountOut || 0n);
+      const feeOutRaw = BigInt(parsed.args.feeAmountOut || 0n);
+      const netOutRaw = amountOutRaw > feeOutRaw ? amountOutRaw - feeOutRaw : 0n;
+
+      const tokenInDecimals = tokenIn === usdc ? 6 : 18;
+      const tokenOutDecimals = tokenOut === usdc ? 6 : 18;
+      const amountIn = unitToNumber(amountInRaw, tokenInDecimals);
+      const amountOutNet = unitToNumber(netOutRaw, tokenOutDecimals);
+      const feeOut = unitToNumber(feeOutRaw, tokenOutDecimals);
+
+      let side = "SWAP";
+      let token = symbolFromAddress(tokenOut);
+      let grossUsdc = 0;
+      let netUsdc = 0;
+      let tokenAmount = 0;
+
+      if (tokenIn === usdc && tokenOut === wrapped) {
+        side = "BUY";
+        token = "ETH";
+        grossUsdc = amountIn;
+        tokenAmount = amountOutNet;
+      } else if (tokenIn === wrapped && tokenOut === usdc) {
+        side = "SELL";
+        token = "ETH";
+        tokenAmount = amountIn;
+        grossUsdc = unitToNumber(amountOutRaw, 6);
+        netUsdc = amountOutNet;
+      }
+
+      parsedRows.push({
+        id: `${log.transactionHash}_${log.logIndex}`,
+        txHash: log.transactionHash,
+        blockNumber: Number(log.blockNumber || 0),
+        logIndex: Number(log.logIndex || 0),
+        token,
+        tokenIn,
+        tokenOut,
+        side,
+        grossUsdc: rounded(grossUsdc, 2),
+        netUsdc: rounded(netUsdc, 2),
+        tokenAmount: rounded(tokenAmount, 8),
+        feeOut: rounded(feeOut, 8),
+        venue: Number(parsed.args.venue || 0),
+        at: null
+      });
+    } catch {
+      // ignore unparseable log
+    }
+  }
+
+  if (parsedRows.length === 0) {
+    return {
+      enabled: true,
+      walletAddress: wallet,
+      fromBlock,
+      toBlock: latest,
+      trades: [],
+      positions: {},
+      pnl: { realized: 0, unrealized: 0, total: 0 }
+    };
+  }
+
+  // Fill timestamps in one batched pass.
+  const blockCache = new Map();
+  for (const row of parsedRows) {
+    if (!blockCache.has(row.blockNumber)) {
+      const block = await provider.getBlock(row.blockNumber);
+      blockCache.set(row.blockNumber, block?.timestamp || 0);
+    }
+    const ts = Number(blockCache.get(row.blockNumber) || 0);
+    row.at = ts > 0 ? new Date(ts * 1000).toISOString() : null;
+  }
+
+  parsedRows.sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+    return a.logIndex - b.logIndex;
+  });
+
+  // Realized PnL model for ETH/USDC flow using avg-cost basis.
+  const positions = {};
+  let realized = 0;
+  for (const row of parsedRows) {
+    const token = String(row.token || "");
+    if (!token || row.side === "SWAP") continue;
+    if (!positions[token]) positions[token] = { amount: 0, costBasis: 0 };
+    const pos = positions[token];
+
+    if (row.side === "BUY") {
+      pos.amount = rounded(pos.amount + Number(row.tokenAmount || 0), 8);
+      pos.costBasis = rounded(pos.costBasis + Number(row.grossUsdc || 0), 2);
+      row.realizedPnl = 0;
+      continue;
+    }
+
+    if (row.side === "SELL") {
+      const qty = Number(row.tokenAmount || 0);
+      const avg = pos.amount > 0 ? pos.costBasis / pos.amount : 0;
+      const removedCost = rounded(avg * qty, 2);
+      const r = rounded(Number(row.netUsdc || 0) - removedCost, 2);
+      realized = rounded(realized + r, 2);
+      row.realizedPnl = r;
+
+      pos.amount = rounded(Math.max(0, pos.amount - qty), 8);
+      pos.costBasis = rounded(Math.max(0, pos.costBasis - removedCost), 2);
+    }
+  }
+
+  let unrealized = 0;
+  const positionView = {};
+  for (const [token, pos] of Object.entries(positions)) {
+    if (pos.amount <= 0) continue;
+    const mark = Number(tokenPrices[token] || 0);
+    const marketValue = rounded(pos.amount * mark, 2);
+    const u = rounded(marketValue - pos.costBasis, 2);
+    unrealized = rounded(unrealized + u, 2);
+    positionView[token] = {
+      amount: rounded(pos.amount, 8),
+      costBasis: rounded(pos.costBasis, 2),
+      markPrice: mark,
+      marketValue,
+      unrealizedPnl: u
+    };
+  }
+
+  parsedRows.sort((a, b) => {
+    const ta = new Date(a.at || 0).getTime();
+    const tb = new Date(b.at || 0).getTime();
+    return tb - ta;
+  });
+
+  return {
+    enabled: true,
+    walletAddress: wallet,
+    fromBlock,
+    toBlock: latest,
+    trades: parsedRows.slice(0, Math.max(1, Math.min(500, Number(limit || 100)))),
+    positions: positionView,
+    pnl: {
+      realized: rounded(realized, 2),
+      unrealized: rounded(unrealized, 2),
+      total: rounded(realized + unrealized, 2)
+    }
   };
 }
 
@@ -2294,10 +2504,12 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/app/bootstrap") {
     const userId = String(url.searchParams.get("userId") || "guest");
+    const walletAddress = String(url.searchParams.get("walletAddress") || "").trim();
     const feedScope = String(url.searchParams.get("feedScope") || "global");
     const user = getOrCreateUser(userId);
     ensurePremiumStatus(user);
     const summary = buildWalletSummary(user);
+    const onchain = await loadOnchainTradeSummaryForWallet(walletAddress || user.auth?.address || "", { limit: 120 });
     const premium = user.premium;
     const inbox = db.notifications.get(userId) || [];
     const feed = buildSocialFeed({ viewerUserId: userId, scope: feedScope, limit: 40 });
@@ -2310,6 +2522,7 @@ const server = createServer(async (req, res) => {
       wallet: summary.wallet,
       positions: summary.positions || {},
       holdings: summary.holdings || {},
+      onchain,
       premium,
       inbox,
       feed,
@@ -2331,9 +2544,37 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === "GET" && url.pathname === "/api/wallet/summary") {
     const userId = url.searchParams.get("userId") || "guest";
+    const walletAddress = String(url.searchParams.get("walletAddress") || "").trim();
     const user = getOrCreateUser(userId);
     const summary = buildWalletSummary(user);
-    return json(res, 200, { ok: true, ...summary });
+    const onchain = await loadOnchainTradeSummaryForWallet(walletAddress || user.auth?.address || "", { limit: 200 });
+
+    const mergedWallet = {
+      ...summary.wallet,
+      onchainRealizedPnl: Number(onchain?.pnl?.realized || 0),
+      onchainUnrealizedPnl: Number(onchain?.pnl?.unrealized || 0),
+      onchainTotalPnl: Number(onchain?.pnl?.total || 0)
+    };
+
+    return json(res, 200, {
+      ok: true,
+      ...summary,
+      wallet: mergedWallet,
+      onchain,
+      recentTrades: Array.isArray(onchain?.trades) && onchain.trades.length > 0 ? onchain.trades.slice(0, 10) : summary.recentTrades
+    });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/onchain/history") {
+    const walletAddress = String(url.searchParams.get("walletAddress") || "").trim();
+    const limit = Number(url.searchParams.get("limit") || 100);
+    if (!walletAddress) return json(res, 400, { ok: false, error: "walletAddress required" });
+    try {
+      const onchain = await loadOnchainTradeSummaryForWallet(walletAddress, { limit });
+      return json(res, 200, { ok: true, ...onchain });
+    } catch (err) {
+      return json(res, httpStatusFromError(err), { ok: false, error: err.message || "onchain_history_failed" });
+    }
   }
 
   if (req.method === "POST" && url.pathname === "/api/follow") {

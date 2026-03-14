@@ -27,7 +27,6 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const UNISWAP_V3_QUOTER_FALLBACK = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a";
 const V3_POOL_FEE_FALLBACK = 500;
 const DEFAULT_TRADE_FEE_BPS = 35;
-const MAX_UINT256 = (1n << 256n) - 1n;
 
 const ERC20_APPROVE_ABI = [
   {
@@ -1138,7 +1137,7 @@ export default function App() {
           const approveData = encodeFunctionData({
             abi: ERC20_APPROVE_ABI,
             functionName: "approve",
-            args: [routerAddress, MAX_UINT256]
+            args: [routerAddress, amountInRaw]
           });
 
           const approveReq = {

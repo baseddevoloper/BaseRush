@@ -1129,16 +1129,29 @@ async function fetchFarcasterProfileByFid(fid) {
   if (!NEYNAR_API_KEY || !numericFid) return null;
 
   try {
-    const url = `https://api.neynar.com/v2/farcaster/user/bulk?fids=${numericFid}`;
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        api_key: NEYNAR_API_KEY
+    const headers = {
+      accept: "application/json",
+      "x-api-key": NEYNAR_API_KEY
+    };
+
+    const bulkUrl = `https://api.neynar.com/v2/farcaster/user/bulk?fids=${numericFid}`;
+    let res = await fetch(bulkUrl, { headers });
+    let user = null;
+
+    if (res.ok) {
+      const data = await res.json();
+      user = data?.users?.[0] || data?.result?.users?.[0] || null;
+    }
+
+    if (!user) {
+      const singleUrl = `https://api.neynar.com/v2/farcaster/user?fid=${numericFid}`;
+      res = await fetch(singleUrl, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        user = data?.user || data?.result?.user || null;
       }
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const user = data?.users?.[0] || data?.result?.users?.[0] || null;
+    }
+
     if (!user) return null;
 
     const username = user.username || null;

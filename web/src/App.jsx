@@ -168,7 +168,7 @@ async function waitForReceipt(provider, txHash, timeoutMs = 120000) {
 async function estimateGasWithBuffer(
   provider,
   txParams,
-  { bufferBps = 3000, minGas = 21000n, maxGas = 2500000n } = {}
+  { bufferBps = 1200, minGas = 21000n, maxGas = 900000n } = {}
 ) {
   try {
     const raw = await provider.request({ method: "eth_estimateGas", params: [txParams] });
@@ -1074,7 +1074,8 @@ export default function App() {
       let amountInRaw;
       let minOutRaw;
       const selectedIsNative = String(tradeTokenAddress || "").toLowerCase() === ETH_ADDRESS.toLowerCase();
-      const autoVenue = selectedIsNative && onchainConfig?.uniswapV4?.enabled ? "v4" : "v3";
+      // Prefer v3 for lower gas cost; we can add smart price routing later.
+      const autoVenue = "v3";
 
       if (side === "BUY") {
         if (!buyModel) throw new Error("quote_missing_for_buy");
@@ -1156,9 +1157,9 @@ export default function App() {
             value: "0x0"
           };
           const approveGas = await estimateGasWithBuffer(provider, approveReq, {
-            bufferBps: 2000,
-            minGas: 65000n,
-            maxGas: 350000n
+            bufferBps: 1000,
+            minGas: 45000n,
+            maxGas: 140000n
           });
           if (approveGas) approveReq.gas = approveGas;
 
@@ -1230,11 +1231,11 @@ export default function App() {
         data: appendBuilderDataSuffix(swapData, builderDataSuffix),
         value: txValue
       };
-      const minSwapGas = autoVenue === "v4" ? 280000n : side === "SELL" ? 220000n : 180000n;
+      const minSwapGas = autoVenue === "v4" ? 240000n : side === "SELL" ? 160000n : 130000n;
       const swapGas = await estimateGasWithBuffer(provider, swapReq, {
-        bufferBps: 3000,
+        bufferBps: 1200,
         minGas: minSwapGas,
-        maxGas: 1200000n
+        maxGas: 550000n
       });
       if (swapGas) swapReq.gas = swapGas;
 

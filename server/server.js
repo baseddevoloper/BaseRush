@@ -1111,6 +1111,19 @@ function buildReferralSummary(userId) {
   };
 }
 
+function getAppFollowCounts(userId) {
+  const uid = String(userId || "");
+  const followingSet = db.follows.get(uid) || new Set();
+  let followers = 0;
+  db.follows.forEach((set) => {
+    if (set.has(uid)) followers += 1;
+  });
+  return {
+    appFollowers: followers,
+    appFollowing: followingSet.size
+  };
+}
+
 async function fetchFarcasterProfileByFid(fid) {
   const numericFid = Number(fid || 0);
   if (!NEYNAR_API_KEY || !numericFid) return null;
@@ -1132,6 +1145,8 @@ async function fetchFarcasterProfileByFid(fid) {
     const displayName = user.display_name || user.displayName || username || null;
     const avatarUrl = user.pfp_url || user?.pfp?.url || null;
     const bio = user?.profile?.bio?.text || null;
+    const farcasterFollowers = Number(user?.follower_count || user?.followerCount || 0) || 0;
+    const farcasterFollowing = Number(user?.following_count || user?.followingCount || 0) || 0;
 
     const verifiedAccounts = Array.isArray(user?.verified_accounts) ? user.verified_accounts : [];
     const twitterVerified = verifiedAccounts.some((a) => {
@@ -1152,7 +1167,9 @@ async function fetchFarcasterProfileByFid(fid) {
         twitter: twitterVerified,
         baseapp: ethAddresses.length > 0
       },
-      verifiedAddresses: ethAddresses
+      verifiedAddresses: ethAddresses,
+      farcasterFollowers,
+      farcasterFollowing
     };
   } catch {
     return null;
@@ -2775,6 +2792,7 @@ const server = createServer(async (req, res) => {
 
     const fid = Number(user?.auth?.fid || 0) || null;
     const remote = await fetchFarcasterProfileByFid(fid);
+    const appGraph = getAppFollowCounts(userId);
 
     const profile = {
       userId,
@@ -2802,7 +2820,18 @@ const server = createServer(async (req, res) => {
     if (remote?.username && !user.auth?.username) user.auth.username = remote.username;
     persistProfilesToDisk();
 
-    return json(res, 200, { ok: true, profile });
+    return json(res, 200, {
+      ok: true,
+      profile: {
+        ...profile,
+        socialGraph: {
+          appFollowers: appGraph.appFollowers,
+          appFollowing: appGraph.appFollowing,
+          farcasterFollowers: Number(remote?.farcasterFollowers || 0),
+          farcasterFollowing: Number(remote?.farcasterFollowing || 0)
+        }
+      }
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/api/referrals/summary") {

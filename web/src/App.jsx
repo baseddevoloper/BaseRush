@@ -331,8 +331,10 @@ function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProf
     bio: socialProfile?.bio || "Base network social trader profile",
     verified: socialProfile?.verified || { farcaster: false, baseapp: false, twitter: false },
     totalTrades: Number(walletSummary?.recentTrades?.length || total || 0),
-    followers: 0,
-    following: 0,
+    followers: Number(socialProfile?.socialGraph?.appFollowers || 0),
+    following: Number(socialProfile?.socialGraph?.appFollowing || 0),
+    farcasterFollowers: Number(socialProfile?.socialGraph?.farcasterFollowers || 0),
+    farcasterFollowing: Number(socialProfile?.socialGraph?.farcasterFollowing || 0),
     winRate,
     totalPnl: Number(wallet.onchainTotalPnl || wallet.totalPnl || 0),
     realizedPnl: Number(wallet.onchainRealizedPnl || wallet.realizedPnl || 0),
@@ -1541,12 +1543,14 @@ export default function App() {
                       <p className="font-semibold">{profileVM.totalTrades}</p>
                     </div>
                     <div className="rounded-xl border border-white/20 bg-black/30 p-2">
-                      <p className="text-zinc-500">Followers</p>
+                      <p className="text-zinc-500">Followers (App)</p>
                       <p className="font-semibold">{profileVM.followers}</p>
+                      {profileVM.farcasterFollowers > 0 ? <p className="text-[10px] text-zinc-500">FC {profileVM.farcasterFollowers}</p> : null}
                     </div>
                     <div className="rounded-xl border border-white/20 bg-black/30 p-2">
-                      <p className="text-zinc-500">Following</p>
+                      <p className="text-zinc-500">Following (App)</p>
                       <p className="font-semibold">{profileVM.following}</p>
+                      {profileVM.farcasterFollowing > 0 ? <p className="text-[10px] text-zinc-500">FC {profileVM.farcasterFollowing}</p> : null}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-violet-400/40 bg-violet-500/10 p-3 text-xs">

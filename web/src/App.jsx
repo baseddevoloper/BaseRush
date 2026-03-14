@@ -764,9 +764,12 @@ export default function App() {
         return;
       }
 
+      let usdcLiveValue = null;
+      let tokenLiveValue = null;
+
       try {
         const provider = await getProvider();
-        if (!provider?.request) return;
+        if (!provider?.request) throw new Error("wallet_provider_missing");
 
         const usdcCall = encodeFunctionData({
           abi: ERC20_BALANCE_ABI,
@@ -782,14 +785,15 @@ export default function App() {
           functionName: "balanceOf",
           data: String(usdcRaw || "0x0")
         });
-        if (!cancelled) setWalletUsdcLive(Number(formatUnits(usdcBal, 6)));
+        usdcLiveValue = Number(formatUnits(usdcBal, 6));
+        if (!cancelled) setWalletUsdcLive(usdcLiveValue);
       } catch {
-        if (!cancelled) setWalletUsdcLive(null);
+        // fallback below
       }
 
       try {
         const provider = await getProvider();
-        if (!provider?.request) return;
+        if (!provider?.request) throw new Error("wallet_provider_missing");
         const selectedIsNative = String(tradeTokenAddress || "").toLowerCase() === ETH_ADDRESS.toLowerCase();
         if (selectedIsNative) {
           const nativeRaw = await provider.request({
@@ -797,27 +801,50 @@ export default function App() {
             params: [walletAddress, "latest"]
           });
           const nativeBal = BigInt(String(nativeRaw || "0x0"));
-          if (!cancelled) setWalletTokenLive(Number(formatUnits(nativeBal, 18)));
-          return;
+          tokenLiveValue = Number(formatUnits(nativeBal, 18));
+          if (!cancelled) setWalletTokenLive(tokenLiveValue);
+        } else {
+          const tokenCall = encodeFunctionData({
+            abi: ERC20_BALANCE_ABI,
+            functionName: "balanceOf",
+            args: [walletAddress]
+          });
+          const tokenRaw = await provider.request({
+            method: "eth_call",
+            params: [{ to: tradeTokenAddress, data: tokenCall }, "latest"]
+          });
+          const tokenBal = decodeFunctionResult({
+            abi: ERC20_BALANCE_ABI,
+            functionName: "balanceOf",
+            data: String(tokenRaw || "0x0")
+          });
+          tokenLiveValue = Number(formatUnits(tokenBal, tradeTokenDecimals));
+          if (!cancelled) setWalletTokenLive(tokenLiveValue);
         }
-
-        const tokenCall = encodeFunctionData({
-          abi: ERC20_BALANCE_ABI,
-          functionName: "balanceOf",
-          args: [walletAddress]
-        });
-        const tokenRaw = await provider.request({
-          method: "eth_call",
-          params: [{ to: tradeTokenAddress, data: tokenCall }, "latest"]
-        });
-        const tokenBal = decodeFunctionResult({
-          abi: ERC20_BALANCE_ABI,
-          functionName: "balanceOf",
-          data: String(tokenRaw || "0x0")
-        });
-        if (!cancelled) setWalletTokenLive(Number(formatUnits(tokenBal, tradeTokenDecimals)));
       } catch {
-        if (!cancelled) setWalletTokenLive(null);
+        // fallback below
+      }
+
+      if (usdcLiveValue == null || tokenLiveValue == null) {
+        try {
+          const params = new URLSearchParams({
+            walletAddress: String(walletAddress || ""),
+            usdcAddress: String(usdcAddress || USDC_FALLBACK),
+            tokenAddress: String(tradeTokenAddress || ETH_ADDRESS),
+            tokenDecimals: String(tradeTokenDecimals || 18)
+          });
+          const out = await getJson(`/api/wallet/live-balances?${params.toString()}`);
+          const b = out?.balances || {};
+          if (!cancelled && usdcLiveValue == null && Number.isFinite(Number(b.usdc))) {
+            setWalletUsdcLive(Number(b.usdc));
+          }
+          if (!cancelled && tokenLiveValue == null && Number.isFinite(Number(b.token))) {
+            setWalletTokenLive(Number(b.token));
+          }
+        } catch {
+          if (!cancelled && usdcLiveValue == null) setWalletUsdcLive(null);
+          if (!cancelled && tokenLiveValue == null) setWalletTokenLive(null);
+        }
       }
     }
 

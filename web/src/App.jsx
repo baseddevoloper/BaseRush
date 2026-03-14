@@ -254,6 +254,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("trade");
   const [holderBoard, setHolderBoard] = useState([]);
   const [onchainPnl, setOnchainPnl] = useState(null);
+  const [featuredTokens, setFeaturedTokens] = useState({ popular: [], meme: [] });
+  const [featuredTab, setFeaturedTab] = useState("popular");
+  const [insightToken, setInsightToken] = useState("ETH");
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -389,9 +392,27 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
+    async function loadFeaturedTokens() {
+      try {
+        const out = await getJson("/api/token/featured");
+        if (!cancelled) setFeaturedTokens(out?.sections || { popular: [], meme: [] });
+      } catch {
+        if (!cancelled) setFeaturedTokens({ popular: [], meme: [] });
+      }
+    }
+
+    loadFeaturedTokens();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadActivityData() {
       try {
-        const out = await getJson("/api/token/insights?token=ETH&limit=6");
+        const out = await getJson(`/api/token/insights?token=${encodeURIComponent(insightToken)}&limit=6`);
         if (!cancelled) setHolderBoard(Array.isArray(out?.holders) ? out.holders : []);
       } catch {
         if (!cancelled) setHolderBoard([]);
@@ -416,7 +437,7 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [walletAddress, lastSwapTx]);
+  }, [walletAddress, lastSwapTx, insightToken]);
 
   async function handleConnectWallet() {
     setConnecting(true);
@@ -751,6 +772,39 @@ export default function App() {
         <div className="mt-3 flex-1">
           {activeTab === "trade" && (
             <div className="space-y-3">
+              <Card className="border-white/10 bg-zinc-900/80">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Market</CardTitle>
+                  <CardDescription>Popular and meme tokens on Base.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant={featuredTab === "popular" ? "default" : "outline"} onClick={() => setFeaturedTab("popular")}>
+                      Popular
+                    </Button>
+                    <Button variant={featuredTab === "meme" ? "default" : "outline"} onClick={() => setFeaturedTab("meme")}>
+                      Meme
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(featuredTokens?.[featuredTab] || []).map((t) => (
+                      <button
+                        key={t.symbol}
+                        type="button"
+                        onClick={() => setInsightToken(t.symbol)}
+                        className={`rounded-xl border px-3 py-2 text-left ${insightToken === t.symbol ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-black/30"}`}
+                      >
+                        <p className="text-sm font-medium">{t.symbol}</p>
+                        <p className="text-xs text-zinc-400">{t.name}</p>
+                        <p className={`mt-1 text-xs ${Number(t.change24h || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {Number(t.change24h || 0) >= 0 ? "+" : ""}{Number(t.change24h || 0).toFixed(2)}%
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
               {!walletConnected && (
                 <Card className="border-white/10 bg-zinc-900/80">
                   <CardContent className="pt-5">
@@ -915,19 +969,25 @@ export default function App() {
 
                   <div className="rounded-xl border border-white/10 bg-black/30 p-3">
                     <div className="mb-2 flex items-center justify-between text-xs">
-                      <span className="text-zinc-400">ETH Holders (App)</span>
+                      <span className="text-zinc-400">{insightToken} Holders (App)</span>
                       <span className="text-zinc-500">Top 6</span>
                     </div>
                     {holderBoard.length > 0 ? (
                       <div className="grid grid-cols-3 gap-2">
                         {holderBoard.slice(0, 6).map((h) => (
-                          <div key={h.userId} className="rounded-lg border border-white/10 bg-zinc-900/70 px-2 py-1.5">
+                          <a
+                            key={h.userId}
+                            className="rounded-lg border border-white/10 bg-zinc-900/70 px-2 py-1.5"
+                            href={h.walletAddress ? `https://basescan.org/address/${h.walletAddress}` : "#"}
+                            target={h.walletAddress ? "_blank" : undefined}
+                            rel={h.walletAddress ? "noreferrer" : undefined}
+                          >
                             <p className="truncate text-[11px] text-zinc-300">{h.handle || h.userId}</p>
-                            <p className="text-[11px] text-zinc-400">{Number(h.amount || 0).toFixed(3)} ETH</p>
+                            <p className="text-[11px] text-zinc-400">{Number(h.amount || 0).toFixed(3)} {insightToken}</p>
                             <p className={`text-[11px] ${Number(h.pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                               {Number(h.pnl || 0) >= 0 ? "+" : ""}{Number(h.pnl || 0).toFixed(2)}
                             </p>
-                          </div>
+                          </a>
                         ))}
                       </div>
                     ) : (

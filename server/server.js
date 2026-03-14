@@ -30,6 +30,7 @@ const TOKEN_REGISTRY = {
   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": { symbol: "AERO", name: "Aerodrome", contract: "0x940181a94a35a4569e4529a3cdfb74e38fd98631", decimals: 18 },
   "0x4ed4e862860beef2b1f4e1a6f3c5fcb4f6f8f7f7": { symbol: "DEGEN", name: "Degen", contract: "0x4ed4e862860beef2b1f4e1a6f3c5fcb4f6f8f7f7", decimals: 18 },
   "0x532f27101965dd16442e59d40670faf5ebb142e4": { symbol: "BRETT", name: "Brett", contract: "0x532f27101965dd16442e59d40670faf5ebb142e4", decimals: 18 },
+  "0x1111111111166b7fe7bd91427724b487980afc69": { symbol: "ZORA", name: "Zora", contract: "0x1111111111166b7FE7bd91427724B487980aFc69", decimals: 18 },
   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": { symbol: "USDC", name: "USD Coin", contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 }
 };
 
@@ -38,6 +39,7 @@ const tokenPrices = {
   AERO: 1.2,
   DEGEN: 0.015,
   BRETT: 0.14,
+  ZORA: 0.08,
   USDC: 1
 };
 
@@ -46,7 +48,8 @@ const TOKEN_MARKET_DATA = {
   USDC: { verified: true, tradable: true, mcap: "$35.1B", volume24h: "$7.1B", change24h: 0.01, spark: "0,20 16,20 32,20 48,19 64,20 80,20 96,19 112,20" },
   AERO: { verified: true, tradable: true, mcap: "$2.1B", volume24h: "$182M", change24h: 4.32, spark: "0,36 16,34 32,32 48,28 64,24 80,20 96,16 112,10" },
   DEGEN: { verified: false, tradable: true, mcap: "$210M", volume24h: "$52M", change24h: -2.14, spark: "0,14 16,16 32,17 48,20 64,24 80,23 96,27 112,30" },
-  BRETT: { verified: false, tradable: true, mcap: "$1.3B", volume24h: "$144M", change24h: 3.48, spark: "0,35 16,34 32,30 48,27 64,24 80,20 96,16 112,13" }
+  BRETT: { verified: false, tradable: true, mcap: "$1.3B", volume24h: "$144M", change24h: 3.48, spark: "0,35 16,34 32,30 48,27 64,24 80,20 96,16 112,13" },
+  ZORA: { verified: true, tradable: true, mcap: "$370M", volume24h: "$12M", change24h: 2.41, spark: "0,32 16,31 32,30 48,29 64,24 80,20 96,16 112,12" }
 };
 
 const ENABLE_REAL_ONCHAIN = process.env.NODE_ENV === "test" ? false : process.env.ENABLE_REAL_ONCHAIN === "true";
@@ -872,6 +875,20 @@ function buildTokenDirectory() {
       spark: market.spark || "0,20 16,20 32,20 48,20 64,20 80,20 96,20 112,20"
     };
   });
+}
+
+function buildFeaturedTokenSections() {
+  const directory = buildTokenDirectory();
+  const bySymbol = new Map(directory.map((t) => [t.symbol, t]));
+
+  const pick = (symbols) => symbols
+    .map((s) => bySymbol.get(s))
+    .filter(Boolean);
+
+  return {
+    popular: pick(["ETH", "USDC", "AERO", "ZORA"]),
+    meme: pick(["BRETT", "DEGEN", "ZORA"])
+  };
 }
 
 function buildTokenLeaderboard(symbol, { limit = 6 } = {}) {
@@ -2062,6 +2079,11 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { ok: true, items });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/token/featured") {
+    const sections = buildFeaturedTokenSections();
+    return json(res, 200, { ok: true, sections });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/token/insights") {
     const tokenInput = url.searchParams.get("token") || "";
     const limit = Number(url.searchParams.get("limit") || 6);
@@ -2597,6 +2619,9 @@ const server = createServer(async (req, res) => {
     const userId = url.searchParams.get("userId") || "guest";
     const walletAddress = String(url.searchParams.get("walletAddress") || "").trim();
     const user = getOrCreateUser(userId);
+    if (walletAddress) {
+      user.auth.address = walletAddress;
+    }
     const summary = buildWalletSummary(user);
     const onchain = await loadOnchainTradeSummaryForWallet(walletAddress || user.auth?.address || "", { limit: 200 });
 

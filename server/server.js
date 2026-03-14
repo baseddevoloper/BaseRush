@@ -128,6 +128,7 @@ const FC_PRIMARY_CATEGORY = process.env.FC_PRIMARY_CATEGORY || "finance";
 const FC_TAGS = process.env.FC_TAGS || "base,trading,socialfi,copytrade,defi";
 const FC_NOTIFICATION_MODE = String(process.env.FC_NOTIFICATION_MODE || "native").toLowerCase();
 const FC_NEYNAR_EVENT_WEBHOOK_URL = process.env.FC_NEYNAR_EVENT_WEBHOOK_URL || "";
+const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY || "";
 const RATE_LIMIT_ENABLED = process.env.NODE_ENV === "test" ? false : String(process.env.RATE_LIMIT_ENABLED || "true") === "true";
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 120);
@@ -1065,6 +1066,54 @@ function buildReferralSummary(userId) {
     earned7d: rounded(earned * 0.2, 2),
     referralLink: "baserush.app/invite/" + (uid || "you")
   };
+}
+
+async function fetchFarcasterProfileByFid(fid) {
+  const numericFid = Number(fid || 0);
+  if (!NEYNAR_API_KEY || !numericFid) return null;
+
+  try {
+    const url = `https://api.neynar.com/v2/farcaster/user/bulk?fids=${numericFid}`;
+    const res = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        api_key: NEYNAR_API_KEY
+      }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const user = data?.users?.[0] || data?.result?.users?.[0] || null;
+    if (!user) return null;
+
+    const username = user.username || null;
+    const displayName = user.display_name || user.displayName || username || null;
+    const avatarUrl = user.pfp_url || user?.pfp?.url || null;
+    const bio = user?.profile?.bio?.text || null;
+
+    const verifiedAccounts = Array.isArray(user?.verified_accounts) ? user.verified_accounts : [];
+    const twitterVerified = verifiedAccounts.some((a) => {
+      const platform = String(a?.platform || a?.platform_type || a?.type || "").toLowerCase();
+      return platform.includes("twitter") || platform === "x";
+    });
+
+    const ethAddresses = Array.isArray(user?.verified_addresses?.eth_addresses) ? user.verified_addresses.eth_addresses : [];
+
+    return {
+      fid: numericFid,
+      username,
+      displayName,
+      avatarUrl,
+      bio,
+      verified: {
+        farcaster: true,
+        twitter: twitterVerified,
+        baseapp: ethAddresses.length > 0
+      },
+      verifiedAddresses: ethAddresses
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function verifyUsdcDepositTransfer({ txHash, expectedAmount, expectedTo = "" }) {
@@ -2633,6 +2682,34 @@ const server = createServer(async (req, res) => {
     const userId = String(url.searchParams.get("userId") || "guest");
     const limit = Number(url.searchParams.get("limit") || 20);
     return json(res, 200, { ok: true, userId, friends: buildFriendsPerformance(userId, limit) });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/social/profile") {
+    const userId = String(url.searchParams.get("userId") || "guest");
+    const walletAddress = String(url.searchParams.get("walletAddress") || "").trim();
+    const user = getOrCreateUser(userId);
+    if (walletAddress) user.auth.address = walletAddress;
+
+    const fid = Number(user?.auth?.fid || 0) || null;
+    const remote = await fetchFarcasterProfileByFid(fid);
+
+    const profile = {
+      userId,
+      fid: remote?.fid || fid,
+      handle: remote?.username ? `@${remote.username}` : (user.auth?.username ? `@${user.auth.username}` : `@${userId}`),
+      displayName: remote?.displayName || user.auth?.username || userId,
+      avatarUrl: remote?.avatarUrl || null,
+      bio: remote?.bio || "Base network social trader profile",
+      walletAddress: user.auth?.address || null,
+      verified: {
+        farcaster: Boolean(remote?.verified?.farcaster || fid),
+        baseapp: Boolean(remote?.verified?.baseapp || user.auth?.address),
+        twitter: Boolean(remote?.verified?.twitter)
+      },
+      verifiedAddresses: remote?.verifiedAddresses || []
+    };
+
+    return json(res, 200, { ok: true, profile });
   }
 
   if (req.method === "GET" && url.pathname === "/api/referrals/summary") {

@@ -317,15 +317,18 @@ function mapTradeEventsToFeedVM(feedItems) {
   }));
 }
 
-function mapProfileStatsVM({ walletSummary, feedItems, walletAddress }) {
+function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProfile }) {
   const wallet = walletSummary?.wallet || {};
   const myFeed = (feedItems || []).filter((x) => x.userId === "guest");
   const wins = myFeed.filter((x) => Number(x.pnl || 0) >= 0).length;
   const total = myFeed.length;
   const winRate = total > 0 ? (wins * 100) / total : 0;
   return {
-    handle: walletAddress ? `@${shortAddr(walletAddress)}` : "@guest",
-    bio: "Base network social trader profile",
+    handle: socialProfile?.handle || (walletAddress ? `@${shortAddr(walletAddress)}` : "@guest"),
+    displayName: socialProfile?.displayName || "BaseRush User",
+    avatarUrl: socialProfile?.avatarUrl || "",
+    bio: socialProfile?.bio || "Base network social trader profile",
+    verified: socialProfile?.verified || { farcaster: false, baseapp: false, twitter: false },
     totalTrades: Number(walletSummary?.recentTrades?.length || total || 0),
     followers: 0,
     following: 0,
@@ -375,6 +378,7 @@ export default function App() {
   const [globalFeedItems, setGlobalFeedItems] = useState([]);
   const [followingIds, setFollowingIds] = useState([]);
   const [newTradesCount, setNewTradesCount] = useState(0);
+  const [socialProfile, setSocialProfile] = useState(null);
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -524,6 +528,22 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSocialProfile() {
+      try {
+        const out = await getJson(`/api/social/profile?userId=guest&walletAddress=${encodeURIComponent(walletAddress || "")}`);
+        if (!cancelled) setSocialProfile(out?.profile || null);
+      } catch {
+        if (!cancelled) setSocialProfile(null);
+      }
+    }
+    loadSocialProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -971,8 +991,8 @@ export default function App() {
   );
   const feedVM = useMemo(() => mapTradeEventsToFeedVM(feedItems), [feedItems]);
   const profileVM = useMemo(
-    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress }),
-    [walletSummary, globalFeedItems, walletAddress]
+    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress, socialProfile }),
+    [walletSummary, globalFeedItems, walletAddress, socialProfile]
   );
 
   const filteredFriends = useMemo(() => {
@@ -1425,16 +1445,25 @@ export default function App() {
               <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-400/60 bg-violet-500/20">
-                      <User className="h-5 w-5 text-violet-300" />
+                    <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-violet-400/60 bg-violet-500/20">
+                      {profileVM.avatarUrl ? (
+                        <img src={profileVM.avatarUrl} alt={profileVM.displayName} className="h-full w-full object-cover" />
+                      ) : (
+                        <User className="h-5 w-5 text-violet-300" />
+                      )}
                     </div>
                     <div>
-                      <CardTitle className="text-lg">{profileVM.handle}</CardTitle>
+                      <CardTitle className="text-lg">{profileVM.displayName}</CardTitle>
                       <CardDescription>{profileVM.bio}</CardDescription>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {profileVM.verified?.farcaster ? <Badge variant="success">Farcaster verified</Badge> : null}
+                    {profileVM.verified?.baseapp ? <Badge variant="success">Base app verified</Badge> : null}
+                    {profileVM.verified?.twitter ? <Badge variant="success">X verified</Badge> : null}
+                  </div>
                   <div className="grid grid-cols-3 gap-2 text-center text-xs">
                     <div className="rounded-xl border border-white/20 bg-black/30 p-2">
                       <p className="text-zinc-500">Trades</p>

@@ -90,6 +90,20 @@ const USER_TRADE_ROUTER_ABI = [
       { name: "recipient", type: "address" }
     ],
     outputs: [{ name: "amountOutAfterFee", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "swapUserNativeToTokenViaUniversalRouter",
+    stateMutability: "payable",
+    inputs: [
+      { name: "tokenOut", type: "address" },
+      { name: "minOut", type: "uint256" },
+      { name: "recipient", type: "address" },
+      { name: "commands", type: "bytes" },
+      { name: "inputs", type: "bytes[]" },
+      { name: "deadline", type: "uint256" }
+    ],
+    outputs: [{ name: "amountOutAfterFee", type: "uint256" }]
   }
 ];
 
@@ -352,10 +366,6 @@ export default function App() {
     };
   }, [ethAmount, slippageBps]);
 
-  useEffect(() => {
-    if (side === "SELL" && venue === "v4") setVenue("v3");
-  }, [side, venue]);
-
   async function handleConnectWallet() {
     setConnecting(true);
     setError("");
@@ -585,13 +595,21 @@ export default function App() {
       let txValue = "0x0";
 
       if (side === "SELL") {
-        if (venue === "v4") throw new Error("sell_eth_v4_not_supported_yet");
-        swapData = encodeFunctionData({
-          abi: USER_TRADE_ROUTER_ABI,
-          functionName: "swapUserNativeToToken",
-          args: [tokenOut, minOutRaw, walletAddress]
-        });
         txValue = `0x${amountInRaw.toString(16)}`;
+        if (venue === "v4") {
+          const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
+          swapData = encodeFunctionData({
+            abi: USER_TRADE_ROUTER_ABI,
+            functionName: "swapUserNativeToTokenViaUniversalRouter",
+            args: [tokenOut, minOutRaw, walletAddress, v4Payload.commands, v4Payload.inputs, v4Payload.deadline]
+          });
+        } else {
+          swapData = encodeFunctionData({
+            abi: USER_TRADE_ROUTER_ABI,
+            functionName: "swapUserNativeToToken",
+            args: [tokenOut, minOutRaw, walletAddress]
+          });
+        }
       } else if (venue === "v4") {
         const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
         swapData = encodeFunctionData({
@@ -705,7 +723,7 @@ export default function App() {
                     <Button
                       variant={venue === "v4" ? "default" : "outline"}
                       onClick={() => setVenue("v4")}
-                      disabled={trading || side === "SELL" || !onchainConfig?.uniswapV4?.enabled}
+                      disabled={trading || !onchainConfig?.uniswapV4?.enabled}
                     >
                       Route V4
                     </Button>

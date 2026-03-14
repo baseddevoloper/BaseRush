@@ -280,6 +280,34 @@ contract UserTradeRouter is ReentrancyGuard {
         );
     }
 
+    function swapUserNativeToTokenViaUniversalRouter(
+        address tokenOut,
+        uint256 minOut,
+        address recipient,
+        bytes calldata commands,
+        bytes[] calldata inputs,
+        uint256 deadline
+    ) external payable nonReentrant returns (uint256 amountOutAfterFee) {
+        if (tokenOut == address(0) || recipient == address(0)) revert InvalidAddress();
+        if (msg.value == 0) revert InvalidAmount();
+        if (wrappedNativeToken == address(0) || tokenOut == wrappedNativeToken) revert InvalidAddress();
+        if (universalRouterV2 == address(0) || permit2 == address(0)) revert MissingRouter();
+
+        IWETH9(wrappedNativeToken).deposit{value: msg.value}();
+        _approvePermit2ForUniversalRouter(wrappedNativeToken, msg.value);
+
+        uint256 outBefore = IERC20(tokenOut).balanceOf(address(this));
+        IUniversalRouterV2(universalRouterV2).execute(commands, inputs, deadline);
+        uint256 outAfter = IERC20(tokenOut).balanceOf(address(this));
+
+        uint256 amountOut = outAfter > outBefore ? outAfter - outBefore : 0;
+        if (amountOut < minOut) revert SwapOutTooLow();
+
+        return _finalizeSwap(
+            msg.sender, wrappedNativeToken, tokenOut, msg.value, minOut, amountOut, recipient, VENUE_UNISWAP_V4
+        );
+    }
+
     function _finalizeSwap(
         address user,
         address tokenIn,

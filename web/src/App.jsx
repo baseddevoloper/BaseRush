@@ -183,6 +183,15 @@ async function estimateGasWithBuffer(
   }
 }
 
+async function providerRequestWithTimeout(provider, payload, timeoutMs = 45000) {
+  return await Promise.race([
+    provider.request(payload),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("wallet_request_timeout")), timeoutMs)
+    )
+  ]);
+}
+
 async function waitForAllowance(provider, token, owner, spender, requiredAmount, timeoutMs = 90000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -1153,10 +1162,10 @@ export default function App() {
           });
           if (approveGas) approveReq.gas = approveGas;
 
-          const approveTx = await provider.request({
+          const approveTx = await providerRequestWithTimeout(provider, {
             method: "eth_sendTransaction",
             params: [approveReq]
-          });
+          }, 60000);
           setLastApproveTx(String(approveTx));
           setStatus("Approve submitted. Waiting confirmation...");
           const allowanceReady = await waitForAllowance(
@@ -1229,10 +1238,10 @@ export default function App() {
       });
       if (swapGas) swapReq.gas = swapGas;
 
-      const swapTx = await provider.request({
+      const swapTx = await providerRequestWithTimeout(provider, {
         method: "eth_sendTransaction",
         params: [swapReq]
-      });
+      }, 60000);
 
       setLastSwapTx(String(swapTx));
       setStatus("Swap submitted. Check status on Basescan.");
@@ -1244,7 +1253,12 @@ export default function App() {
         if (!msg.includes("does not support the requested method")) throw receiptErr;
       }
     } catch (e) {
-      setError(String(e?.message || "trade_failed"));
+      const msg = String(e?.message || "trade_failed");
+      if (msg.includes("wallet_request_timeout")) {
+        setError("wallet_request_timeout_open_wallet_popup");
+      } else {
+        setError(msg);
+      }
       setStatus("");
     } finally {
       setTrading(false);

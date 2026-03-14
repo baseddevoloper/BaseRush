@@ -1189,6 +1189,69 @@ async function fetchFarcasterProfileByFid(fid) {
   }
 }
 
+async function fetchFarcasterProfileByAddress(address) {
+  const normalized = String(address || "").trim().toLowerCase();
+  if (!NEYNAR_API_KEY || !normalized) return null;
+  try {
+    const headers = {
+      accept: "application/json",
+      "x-api-key": NEYNAR_API_KEY
+    };
+
+    const bulkByAddress = `https://api.neynar.com/v2/farcaster/user/bulk-by-address?addresses=${encodeURIComponent(normalized)}`;
+    const res = await fetch(bulkByAddress, { headers });
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    // Common shapes:
+    // { users: [{...}] } or { result: { users: [{...}] } } or { [address]: [{...}] }
+    let user =
+      data?.users?.[0] ||
+      data?.result?.users?.[0] ||
+      data?.[normalized]?.[0] ||
+      null;
+
+    if (!user && data && typeof data === "object") {
+      const maybeArray = Object.values(data).find((v) => Array.isArray(v) && v.length > 0);
+      user = maybeArray?.[0] || null;
+    }
+    if (!user) return null;
+
+    const fid = Number(user?.fid || 0) || null;
+    const username = user.username || null;
+    const displayName = user.display_name || user.displayName || username || null;
+    const avatarUrl = user.pfp_url || user?.pfp?.url || null;
+    const bio = user?.profile?.bio?.text || null;
+    const farcasterFollowers = Number(user?.follower_count || user?.followerCount || 0) || 0;
+    const farcasterFollowing = Number(user?.following_count || user?.followingCount || 0) || 0;
+
+    const verifiedAccounts = Array.isArray(user?.verified_accounts) ? user.verified_accounts : [];
+    const twitterVerified = verifiedAccounts.some((a) => {
+      const platform = String(a?.platform || a?.platform_type || a?.type || "").toLowerCase();
+      return platform.includes("twitter") || platform === "x";
+    });
+    const ethAddresses = Array.isArray(user?.verified_addresses?.eth_addresses) ? user.verified_addresses.eth_addresses : [];
+
+    return {
+      fid,
+      username,
+      displayName,
+      avatarUrl,
+      bio,
+      verified: {
+        farcaster: true,
+        twitter: twitterVerified,
+        baseapp: ethAddresses.length > 0
+      },
+      verifiedAddresses: ethAddresses,
+      farcasterFollowers,
+      farcasterFollowing
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function verifyUsdcDepositTransfer({ txHash, expectedAmount, expectedTo = "" }) {
   if (!BASE_RPC_URL) {
     const err = new Error("base_rpc_missing");
@@ -2774,26 +2837,34 @@ const server = createServer(async (req, res) => {
     const body = await parseBody(req);
     const walletAddress = String(body.walletAddress || "").trim();
     const miniappUser = body.miniappUser && typeof body.miniappUser === "object" ? body.miniappUser : {};
-    const fid = Number(body.fid || miniappUser.fid || 0) || null;
-    const username = String(body.username || miniappUser.username || "").trim() || null;
-    const displayName = String(body.displayName || miniappUser.displayName || "").trim() || null;
-    const pfpUrl = String(body.pfpUrl || miniappUser.pfpUrl || "").trim() || null;
-    const bio = String(body.bio || "").trim() || null;
+    const inputFid = Number(body.fid || miniappUser.fid || 0) || null;
+    const inputUsername = String(body.username || miniappUser.username || "").trim() || null;
+    const inputDisplayName = String(body.displayName || miniappUser.displayName || "").trim() || null;
+    const inputPfpUrl = String(body.pfpUrl || miniappUser.pfpUrl || "").trim() || null;
+    const inputBio = String(body.bio || "").trim() || null;
     const authAddress = String(body.authAddress || "").trim() || null;
     const normalizedAddress = walletAddress || authAddress || "";
+    const remoteByAddress = normalizedAddress ? await fetchFarcasterProfileByAddress(normalizedAddress) : null;
+    const fid = inputFid || remoteByAddress?.fid || null;
+    const username = inputUsername || remoteByAddress?.username || null;
+    const displayName = inputDisplayName || remoteByAddress?.displayName || null;
+    const pfpUrl = inputPfpUrl || remoteByAddress?.avatarUrl || null;
+    const bio = inputBio || remoteByAddress?.bio || null;
 
     const byFid = fid ? findUserIdByFid(fid) : "";
     const byAddress = normalizedAddress ? findUserIdByAddress(normalizedAddress) : "";
+    const byRemoteFid = remoteByAddress?.fid ? findUserIdByFid(remoteByAddress.fid) : "";
     const resolvedUserId =
       String(body.userId || "").trim() ||
       byFid ||
+      byRemoteFid ||
       byAddress ||
       (fid ? `fc_${fid}` : normalizedAddress ? `wallet_${normalizedAddress.toLowerCase()}` : `guest`);
 
     const user = getOrCreateUser(resolvedUserId);
     user.auth = {
       ...(user.auth || {}),
-      provider: fid ? "farcaster" : (user.auth?.provider || "guest"),
+      provider: fid || remoteByAddress?.fid ? "farcaster" : (user.auth?.provider || "guest"),
       fid: fid || user.auth?.fid || null,
       address: normalizedAddress || user.auth?.address || null,
       username: username || user.auth?.username || null
@@ -2804,9 +2875,9 @@ const server = createServer(async (req, res) => {
       pfpUrl: pfpUrl || user.profile?.pfpUrl || null,
       bio: bio || user.profile?.bio || null,
       verified: {
-        farcaster: Boolean(fid || user.profile?.verified?.farcaster),
-        baseapp: Boolean(normalizedAddress || user.profile?.verified?.baseapp),
-        twitter: Boolean(user.profile?.verified?.twitter)
+        farcaster: Boolean(fid || remoteByAddress?.verified?.farcaster || user.profile?.verified?.farcaster),
+        baseapp: Boolean(normalizedAddress || remoteByAddress?.verified?.baseapp || user.profile?.verified?.baseapp),
+        twitter: Boolean(remoteByAddress?.verified?.twitter || user.profile?.verified?.twitter)
       }
     };
     persistProfilesToDisk();
@@ -2861,21 +2932,29 @@ const server = createServer(async (req, res) => {
       persistProfilesToDisk();
     }
 
+    const effectiveWallet = String(walletAddress || user.auth?.address || "").trim();
     const fid = Number(user?.auth?.fid || 0) || null;
-    const remote = await fetchFarcasterProfileByFid(fid);
+    let remote = fid ? await fetchFarcasterProfileByFid(fid) : null;
+    if (!remote && effectiveWallet) {
+      remote = await fetchFarcasterProfileByAddress(effectiveWallet);
+    }
     const appGraph = getAppFollowCounts(userId);
+    const handle =
+      remote?.username ? `@${remote.username}` :
+      (user.auth?.username ? `@${user.auth.username}` :
+      (effectiveWallet ? `@${effectiveWallet.slice(0, 6)}...${effectiveWallet.slice(-4)}` : `@${userId}`));
 
     const profile = {
       userId,
       fid: remote?.fid || fid,
-      handle: remote?.username ? `@${remote.username}` : (user.auth?.username ? `@${user.auth.username}` : `@${userId}`),
-      displayName: remote?.displayName || user.profile?.displayName || user.auth?.username || userId,
+      handle,
+      displayName: remote?.displayName || user.profile?.displayName || user.auth?.username || (effectiveWallet ? `${effectiveWallet.slice(0, 6)}...${effectiveWallet.slice(-4)}` : userId),
       avatarUrl: remote?.avatarUrl || user.profile?.pfpUrl || null,
       bio: remote?.bio || user.profile?.bio || "Base network social trader profile",
-      walletAddress: user.auth?.address || null,
+      walletAddress: effectiveWallet || null,
       verified: {
         farcaster: Boolean(remote?.verified?.farcaster || user.profile?.verified?.farcaster || fid),
-        baseapp: Boolean(remote?.verified?.baseapp || user.profile?.verified?.baseapp || user.auth?.address),
+        baseapp: Boolean(remote?.verified?.baseapp || user.profile?.verified?.baseapp || effectiveWallet),
         twitter: Boolean(remote?.verified?.twitter || user.profile?.verified?.twitter)
       },
       verifiedAddresses: remote?.verifiedAddresses || []
@@ -2889,6 +2968,7 @@ const server = createServer(async (req, res) => {
       verified: profile.verified
     };
     if (remote?.username && !user.auth?.username) user.auth.username = remote.username;
+    if (remote?.fid && !user.auth?.fid) user.auth.fid = remote.fid;
     persistProfilesToDisk();
 
     return json(res, 200, {

@@ -251,7 +251,7 @@ export default function App() {
   const [quoteSell, setQuoteSell] = useState(null);
   const [lastApproveTx, setLastApproveTx] = useState("");
   const [lastSwapTx, setLastSwapTx] = useState("");
-  const [activeTab, setActiveTab] = useState("trade");
+  const [activeTab, setActiveTab] = useState("home");
   const [holderBoard, setHolderBoard] = useState([]);
   const [onchainPnl, setOnchainPnl] = useState(null);
   const [featuredTokens, setFeaturedTokens] = useState({ popular: [], meme: [] });
@@ -751,8 +751,8 @@ export default function App() {
           <CardHeader className="space-y-3 pb-4">
             <div className="flex items-center justify-between">
               <div>
-                <CardDescription className="text-zinc-400">BaseRush Mobile</CardDescription>
-                <CardTitle className="text-2xl">Test Trade</CardTitle>
+                <CardDescription className="text-zinc-400">BaseRush</CardDescription>
+                <CardTitle className="text-2xl">Home</CardTitle>
               </div>
               <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
             </div>
@@ -770,11 +770,11 @@ export default function App() {
         </Card>
 
         <div className="mt-3 flex-1">
-          {activeTab === "trade" && (
+          {activeTab === "home" && (
             <div className="space-y-3">
               <Card className="border-white/10 bg-zinc-900/80">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Market</CardTitle>
+                  <CardTitle className="text-lg">Market Overview</CardTitle>
                   <CardDescription>Popular and meme tokens on Base.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -817,6 +817,10 @@ export default function App() {
               )}
 
               <Card className="border-white/10 bg-zinc-900/80">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Quick Trade</CardTitle>
+                  <CardDescription>Fast buy/sell flow from your connected wallet.</CardDescription>
+                </CardHeader>
                 <CardContent className="space-y-4 pt-5">
                   <div className="grid grid-cols-2 gap-2">
                     <Button variant={side === "BUY" ? "default" : "outline"} onClick={() => setSide("BUY")} disabled={trading}>
@@ -1066,9 +1070,9 @@ export default function App() {
       <div className="fixed inset-x-0 bottom-0 z-40">
         <div className="mx-auto max-w-md px-4 pb-4">
           <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-zinc-900/95 p-2 backdrop-blur">
-            <Button variant={activeTab === "trade" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("trade")}>
+            <Button variant={activeTab === "home" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("home")}>
               <Home className="mr-1.5 h-4 w-4" />
-              Trade
+              Home
             </Button>
             <Button variant={activeTab === "activity" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("activity")}>
               <ActivityIcon className="mr-1.5 h-4 w-4" />

@@ -15,7 +15,7 @@ import {
   Wallet as WalletIcon
 } from "lucide-react";
 import { useAccount } from "wagmi";
-import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, parseUnits } from "viem";
+import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, formatUnits, parseUnits } from "viem";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Input } from "./components/ui/input";
@@ -109,6 +109,16 @@ const USER_TRADE_ROUTER_ABI = [
       { name: "deadline", type: "uint256" }
     ],
     outputs: [{ name: "amountOutAfterFee", type: "uint256" }]
+  }
+];
+
+const ERC20_BALANCE_ABI = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }]
   }
 ];
 
@@ -481,7 +491,6 @@ export default function App() {
   const [lastSwapTx, setLastSwapTx] = useState("");
   const [pendingSwapReq, setPendingSwapReq] = useState(null);
   const [activeTab, setActiveTab] = useState("home");
-  const [tradePanelOpen, setTradePanelOpen] = useState(false);
   const [holderBoard, setHolderBoard] = useState([]);
   const [onchainPnl, setOnchainPnl] = useState(null);
   const [featuredTokens, setFeaturedTokens] = useState({ popular: [], meme: [] });
@@ -503,6 +512,8 @@ export default function App() {
   const [editingBio, setEditingBio] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [customBio, setCustomBio] = useState("");
+  const [walletUsdcLive, setWalletUsdcLive] = useState(null);
+  const [walletTokenLive, setWalletTokenLive] = useState(null);
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -571,14 +582,22 @@ export default function App() {
     return p > 0 ? p : ETH_USD_FALLBACK;
   }, [featuredTokens]);
 
-  const walletUsdc = useMemo(() => Number(walletSummary?.wallet?.usdc || 0), [walletSummary]);
-  const walletTokenAmount = useMemo(() => {
+  const walletUsdcFallback = useMemo(() => Number(walletSummary?.wallet?.usdc || 0), [walletSummary]);
+  const walletTokenFallback = useMemo(() => {
     const sym = String(tradeTokenSymbol || "").toUpperCase();
     const p = walletSummary?.positions?.[sym];
     if (p && Number(p.amount || 0) > 0) return Number(p.amount || 0);
     const h = walletSummary?.holdings?.[sym];
     return Number(h || 0);
   }, [walletSummary, tradeTokenSymbol]);
+  const walletUsdc = useMemo(
+    () => (walletUsdcLive == null ? walletUsdcFallback : walletUsdcLive),
+    [walletUsdcLive, walletUsdcFallback]
+  );
+  const walletTokenAmount = useMemo(
+    () => (walletTokenLive == null ? walletTokenFallback : walletTokenLive),
+    [walletTokenLive, walletTokenFallback]
+  );
 
   function applySizePercent(rawPct) {
     const pct = Math.max(0.1, Math.min(100, Number(rawPct || 0)));
@@ -602,7 +621,6 @@ export default function App() {
     setTradeTokenPrice(price > 0 ? price : 0);
     setRouteMode("USDC");
     setSizePreset("25");
-    setTradePanelOpen(true);
   }
 
   async function getProvider() {
@@ -733,6 +751,81 @@ export default function App() {
     if (pct > 0) applySizePercent(pct);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [side, walletUsdc, walletTokenAmount, sizePreset, customSizePct]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLiveBalances() {
+      if (!walletAddress) {
+        if (!cancelled) {
+          setWalletUsdcLive(null);
+          setWalletTokenLive(null);
+        }
+        return;
+      }
+
+      try {
+        const provider = await getProvider();
+        if (!provider?.request) return;
+
+        const usdcCall = encodeFunctionData({
+          abi: ERC20_BALANCE_ABI,
+          functionName: "balanceOf",
+          args: [walletAddress]
+        });
+        const usdcRaw = await provider.request({
+          method: "eth_call",
+          params: [{ to: usdcAddress, data: usdcCall }, "latest"]
+        });
+        const usdcBal = decodeFunctionResult({
+          abi: ERC20_BALANCE_ABI,
+          functionName: "balanceOf",
+          data: String(usdcRaw || "0x0")
+        });
+        if (!cancelled) setWalletUsdcLive(Number(formatUnits(usdcBal, 6)));
+      } catch {
+        if (!cancelled) setWalletUsdcLive(null);
+      }
+
+      try {
+        const provider = await getProvider();
+        if (!provider?.request) return;
+        const selectedIsNative = String(tradeTokenAddress || "").toLowerCase() === ETH_ADDRESS.toLowerCase();
+        if (selectedIsNative) {
+          const nativeRaw = await provider.request({
+            method: "eth_getBalance",
+            params: [walletAddress, "latest"]
+          });
+          const nativeBal = BigInt(String(nativeRaw || "0x0"));
+          if (!cancelled) setWalletTokenLive(Number(formatUnits(nativeBal, 18)));
+          return;
+        }
+
+        const tokenCall = encodeFunctionData({
+          abi: ERC20_BALANCE_ABI,
+          functionName: "balanceOf",
+          args: [walletAddress]
+        });
+        const tokenRaw = await provider.request({
+          method: "eth_call",
+          params: [{ to: tradeTokenAddress, data: tokenCall }, "latest"]
+        });
+        const tokenBal = decodeFunctionResult({
+          abi: ERC20_BALANCE_ABI,
+          functionName: "balanceOf",
+          data: String(tokenRaw || "0x0")
+        });
+        if (!cancelled) setWalletTokenLive(Number(formatUnits(tokenBal, tradeTokenDecimals)));
+      } catch {
+        if (!cancelled) setWalletTokenLive(null);
+      }
+    }
+
+    loadLiveBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, usdcAddress, tradeTokenAddress, tradeTokenDecimals, lastSwapTx]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1514,16 +1607,6 @@ export default function App() {
                 <p>{miniAppDetected ? "Injected" : "Not detected"}</p>
               </div>
             </div>
-            {activeTab === "home" ? (
-              <div className="grid grid-cols-2 gap-2">
-                <Button variant="secondary" className="bg-white/15 text-white hover:bg-white/25">
-                  Deposit
-                </Button>
-                <Button className="bg-violet-600 text-white hover:bg-violet-500" onClick={() => setTradePanelOpen((v) => !v)}>
-                  {tradePanelOpen ? "Hide Trade" : "Trade"}
-                </Button>
-              </div>
-            ) : null}
           </CardHeader>
         </Card>
 
@@ -1625,8 +1708,7 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              {tradePanelOpen ? (
-                <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
+              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Quick Trade</CardTitle>
                   <CardDescription>{tradeTokenSymbol} quick buy/sell from connected wallet.</CardDescription>
@@ -1789,7 +1871,6 @@ export default function App() {
                   ) : null}
                 </CardContent>
               </Card>
-              ) : null}
             </div>
           )}
 
@@ -2050,7 +2131,7 @@ export default function App() {
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-zinc-400">USDC balance</span>
-                      <span>{Number(walletSummary?.wallet?.usdc || 0).toFixed(2)} USDC</span>
+                      <span>{Number(walletUsdc || 0).toFixed(2)} USDC</span>
                     </div>
                   </div>
 

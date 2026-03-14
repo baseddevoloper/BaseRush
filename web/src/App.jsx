@@ -471,6 +471,8 @@ export default function App() {
   const [tradeTokenDecimals, setTradeTokenDecimals] = useState(18);
   const [tradeTokenPrice, setTradeTokenPrice] = useState(0);
   const [routeMode, setRouteMode] = useState("USDC");
+  const [sizePreset, setSizePreset] = useState("25");
+  const [customSizePct, setCustomSizePct] = useState("33");
   const [slippageMode, setSlippageMode] = useState("1");
   const [customSlippage, setCustomSlippage] = useState("1");
 
@@ -569,6 +571,22 @@ export default function App() {
     return p > 0 ? p : ETH_USD_FALLBACK;
   }, [featuredTokens]);
 
+  const walletUsdc = useMemo(() => Number(walletSummary?.wallet?.usdc || 0), [walletSummary]);
+  const walletTokenAmount = useMemo(() => {
+    const sym = String(tradeTokenSymbol || "").toUpperCase();
+    const p = walletSummary?.positions?.[sym];
+    if (p && Number(p.amount || 0) > 0) return Number(p.amount || 0);
+    const h = walletSummary?.holdings?.[sym];
+    return Number(h || 0);
+  }, [walletSummary, tradeTokenSymbol]);
+
+  function applySizePercent(rawPct) {
+    const pct = Math.max(0.1, Math.min(100, Number(rawPct || 0)));
+    const base = side === "BUY" ? walletUsdc : walletTokenAmount;
+    const amount = (base * pct) / 100;
+    if (amount > 0) setTradeAmount(amount.toFixed(6).replace(/\.?0+$/, ""));
+  }
+
   function selectTradeToken(token) {
     if (!token) return;
     const symbol = String(token.symbol || "").toUpperCase();
@@ -583,6 +601,7 @@ export default function App() {
     if (Number.isFinite(decimals) && decimals > 0) setTradeTokenDecimals(decimals);
     setTradeTokenPrice(price > 0 ? price : 0);
     setRouteMode("USDC");
+    setSizePreset("25");
     setTradePanelOpen(true);
   }
 
@@ -708,6 +727,12 @@ export default function App() {
       cancelled = true;
     };
   }, [tradeAmount, slippageBps, currentUserId, tradeTokenSymbol, tradeTokenPrice, side]);
+
+  useEffect(() => {
+    const pct = sizePreset === "custom" ? Number(customSizePct || 0) : Number(sizePreset || 0);
+    if (pct > 0) applySizePercent(pct);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [side, walletUsdc, walletTokenAmount, sizePreset, customSizePct]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1622,6 +1647,9 @@ export default function App() {
                   <div className="rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-xs text-zinc-400">
                     Routing: Auto ({routeMode} path)
                   </div>
+                  <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    Approve is first confirmation. Swap is second confirmation.
+                  </div>
 
                   <div className="space-y-2">
                     <p className="mb-1 text-xs text-zinc-400">{tokenAmountLabel} Amount</p>
@@ -1635,16 +1663,53 @@ export default function App() {
                       placeholder={side === "BUY" ? "10" : "0.01"}
                     />
                     <div className="mt-2 grid grid-cols-4 gap-2">
-                      {(side === "BUY" ? ["10", "25", "50", "100"] : ["0.0001", "0.001", "0.01", "0.1"]).map((amount) => (
+                      {["10", "25", "50", "100"].map((pct) => (
                         <Button
-                          key={amount}
-                          variant={tradeAmount === amount ? "default" : "outline"}
-                          onClick={() => setTradeAmount(amount)}
+                          key={pct}
+                          variant={sizePreset === pct ? "default" : "outline"}
+                          onClick={() => {
+                            setSizePreset(pct);
+                            applySizePercent(Number(pct));
+                          }}
                           disabled={trading}
                         >
-                          {amount}
+                          %{pct}
                         </Button>
                       ))}
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <Button
+                        variant={sizePreset === "custom" ? "default" : "outline"}
+                        onClick={() => {
+                          setSizePreset("custom");
+                          applySizePercent(Number(customSizePct || 0));
+                        }}
+                        disabled={trading}
+                      >
+                        Custom %
+                      </Button>
+                      {sizePreset === "custom" ? (
+                        <Input
+                          className="h-10 rounded-xl border-white/15 bg-black/35"
+                          type="number"
+                          min="0.1"
+                          max="100"
+                          step="0.1"
+                          value={customSizePct}
+                          onChange={(e) => {
+                            setCustomSizePct(e.target.value);
+                            const n = Number(e.target.value || 0);
+                            if (n > 0) applySizePercent(n);
+                          }}
+                          placeholder="33"
+                        />
+                      ) : (
+                        <div className="h-10 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-400">
+                          {side === "BUY"
+                            ? `Balance: ${walletUsdc.toFixed(2)} USDC`
+                            : `Balance: ${walletTokenAmount.toFixed(6)} ${tradeTokenSymbol}`}
+                        </div>
+                      )}
                     </div>
                   </div>
 

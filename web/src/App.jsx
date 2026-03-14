@@ -239,15 +239,18 @@ function formatUsd(v) {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
 }
 
-function mapWalletSummaryToHomeVM(summary, walletAddress, socialProfile) {
+function mapWalletSummaryToHomeVM(summary, walletAddress, socialProfile, miniAppUser) {
   const wallet = summary?.wallet || {};
   return {
     handle:
       socialProfile?.handle ||
+      (miniAppUser?.username ? `@${miniAppUser.username}` : null) ||
       (socialProfile?.displayName ? `@${socialProfile.displayName}` : null) ||
       (walletAddress ? `@${shortAddr(walletAddress)}` : "@guest"),
     displayName:
       socialProfile?.displayName ||
+      miniAppUser?.displayName ||
+      miniAppUser?.username ||
       socialProfile?.handle?.replace(/^@/, "") ||
       (walletAddress ? shortAddr(walletAddress) : "Guest"),
     balance: Number(wallet.usdc || 0),
@@ -325,7 +328,7 @@ function mapTradeEventsToFeedVM(feedItems) {
   }));
 }
 
-function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProfile, currentUserId }) {
+function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProfile, currentUserId, miniAppUser }) {
   const wallet = walletSummary?.wallet || {};
   const myFeed = (feedItems || []).filter((x) => x.userId === currentUserId);
   const wins = myFeed.filter((x) => Number(x.pnl || 0) >= 0).length;
@@ -333,8 +336,8 @@ function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProf
   const winRate = total > 0 ? (wins * 100) / total : 0;
   return {
     handle: socialProfile?.handle || (walletAddress ? `@${shortAddr(walletAddress)}` : "@guest"),
-    displayName: socialProfile?.displayName || socialProfile?.handle?.replace(/^@/, "") || "BaseRush User",
-    avatarUrl: socialProfile?.avatarUrl || "",
+    displayName: socialProfile?.displayName || miniAppUser?.displayName || miniAppUser?.username || socialProfile?.handle?.replace(/^@/, "") || "BaseRush User",
+    avatarUrl: socialProfile?.avatarUrl || miniAppUser?.pfpUrl || "",
     bio: socialProfile?.bio || "Base network social trader profile",
     verified: socialProfile?.verified || { farcaster: false, baseapp: false, twitter: false },
     totalTrades: Number(walletSummary?.recentTrades?.length || total || 0),
@@ -360,6 +363,7 @@ export default function App() {
   const [connectedAddress, setConnectedAddress] = useState("");
   const [currentUserId, setCurrentUserId] = useState("guest");
   const [authToken, setAuthToken] = useState("");
+  const [miniAppUser, setMiniAppUser] = useState(null);
 
   const [onchainConfig, setOnchainConfig] = useState(null);
 
@@ -544,11 +548,25 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
+    async function waitContextWithRetry() {
+      for (let i = 0; i < 5; i += 1) {
+        if (cancelled) return null;
+        const ctx = await Promise.race([
+          sdk.context.catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(null), 1800))
+        ]);
+        if (ctx?.user?.fid || ctx?.user?.username || ctx?.user?.displayName) return ctx;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      return null;
+    }
+
     async function syncMiniAppIdentity() {
       try {
-        const ctx = await sdk.context.catch(() => null);
+        const ctx = await waitContextWithRetry();
         const ctxUser = ctx?.user || null;
         const ctxFid = Number(ctxUser?.fid || 0) || null;
+        if (!cancelled) setMiniAppUser(ctxUser);
 
         let token = "";
         try {
@@ -1065,8 +1083,8 @@ export default function App() {
   const quoteReady = side === "BUY" ? !!buyModel : !!sellModel;
   const canTrade = walletConnected && !trading && !!routerAddress && quoteReady;
   const homeVM = useMemo(
-    () => mapWalletSummaryToHomeVM(walletSummary, walletAddress, socialProfile),
-    [walletSummary, walletAddress, socialProfile]
+    () => mapWalletSummaryToHomeVM(walletSummary, walletAddress, socialProfile, miniAppUser),
+    [walletSummary, walletAddress, socialProfile, miniAppUser]
   );
   const friendsVM = useMemo(
     () => mapInsightsToFriendsVM(friendsRows, globalFeedItems, followingIds),
@@ -1074,8 +1092,8 @@ export default function App() {
   );
   const feedVM = useMemo(() => mapTradeEventsToFeedVM(feedItems), [feedItems]);
   const profileVM = useMemo(
-    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress, socialProfile, currentUserId }),
-    [walletSummary, globalFeedItems, walletAddress, socialProfile, currentUserId]
+    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress, socialProfile, currentUserId, miniAppUser }),
+    [walletSummary, globalFeedItems, walletAddress, socialProfile, currentUserId, miniAppUser]
   );
 
   const filteredFriends = useMemo(() => {

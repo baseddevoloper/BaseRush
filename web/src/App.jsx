@@ -406,8 +406,7 @@ export default function App() {
   const [onchainConfig, setOnchainConfig] = useState(null);
 
   const [side, setSide] = useState("BUY");
-  const [venue, setVenue] = useState("v3");
-  const [ethAmount, setEthAmount] = useState("0.01");
+  const [tradeAmount, setTradeAmount] = useState("10");
   const [tradeTokenSymbol, setTradeTokenSymbol] = useState("ETH");
   const [tradeTokenAddress, setTradeTokenAddress] = useState(ETH_ADDRESS);
   const [tradeTokenDecimals, setTradeTokenDecimals] = useState(18);
@@ -462,38 +461,38 @@ export default function App() {
   const slippageBps = useMemo(() => Math.round(slippagePct * 100), [slippagePct]);
 
   const buyModel = useMemo(() => {
-    const amountEth = Number(ethAmount || 0);
+    const inputUsdc = Number(tradeAmount || 0);
     const price = Number(quoteSell?.price || 0);
     const feeBps = Number(quoteSell?.feeBps || 0);
-    if (!(amountEth > 0) || !(price > 0)) return null;
+    if (!(inputUsdc > 0) || !(price > 0)) return null;
 
     const feeFactor = 1 - feeBps / 10000;
     if (feeFactor <= 0) return null;
 
-    const requiredUsdc = (amountEth * price) / feeFactor;
-    const minOutEth = amountEth * (1 - slippagePct / 100);
+    const expectedTokenOut = (inputUsdc * feeFactor) / price;
+    const minOutToken = expectedTokenOut * (1 - slippagePct / 100);
 
     return {
-      amountEth,
-      requiredUsdc,
-      minOutEth
+      inputUsdc,
+      expectedTokenOut,
+      minOutToken
     };
-  }, [ethAmount, quoteSell, slippagePct]);
+  }, [tradeAmount, quoteSell, slippagePct]);
 
   const sellModel = useMemo(() => {
-    const amountEth = Number(ethAmount || 0);
+    const amountToken = Number(tradeAmount || 0);
     const outUsdc = Number(quoteSell?.outUsdc || 0);
-    if (!(amountEth > 0) || !(outUsdc > 0)) return null;
+    if (!(amountToken > 0) || !(outUsdc > 0)) return null;
 
     const minOutUsdc = outUsdc * (1 - slippagePct / 100);
     return {
-      amountEth,
+      amountToken,
       expectedUsdc: outUsdc,
       minOutUsdc
     };
-  }, [ethAmount, quoteSell, slippagePct]);
+  }, [tradeAmount, quoteSell, slippagePct]);
 
-  const tokenAmountLabel = tradeTokenSymbol || "Token";
+  const tokenAmountLabel = side === "BUY" ? "USDC Amount" : `${tradeTokenSymbol || "Token"} Amount`;
 
   const filteredMarketTokens = useMemo(() => {
     const rows = Array.isArray(featuredTokens?.[featuredTab]) ? [...featuredTokens[featuredTab]] : [];
@@ -570,7 +569,7 @@ export default function App() {
     let cancelled = false;
 
     async function loadQuoteSell() {
-      const n = Number(ethAmount || 0);
+      const n = Number(tradeAmount || 0);
       if (!(n > 0)) {
         setQuoteSell(null);
         return;
@@ -578,8 +577,9 @@ export default function App() {
 
       const params = new URLSearchParams({
         token: tradeTokenSymbol,
-        side: "SELL",
-        tokenAmount: String(n),
+        side: side === "BUY" ? "BUY" : "SELL",
+        amountUsdc: side === "BUY" ? String(n) : "0",
+        tokenAmount: side === "SELL" ? String(n) : "0",
         userId: currentUserId,
         slippageBps: String(slippageBps)
       });
@@ -590,23 +590,44 @@ export default function App() {
       } catch {
         if (!cancelled) {
           if (tradeTokenPrice > 0) {
-            const grossUsdc = n * tradeTokenPrice;
-            const feeUsdc = (grossUsdc * DEFAULT_TRADE_FEE_BPS) / 10000;
-            const outUsdc = Math.max(0, grossUsdc - feeUsdc);
-            setQuoteSell({
-              token: tradeTokenSymbol,
-              side: "SELL",
-              price: tradeTokenPrice,
-              feeBps: DEFAULT_TRADE_FEE_BPS,
-              feeUsdc,
-              inputUsdc: grossUsdc,
-              netUsdc: outUsdc,
-              outTokenAmount: n,
-              outUsdc,
-              slippageBps,
-              expiresInSec: 10,
-              source: "local_fallback"
-            });
+            if (side === "BUY") {
+              const inputUsdc = n;
+              const feeUsdc = (inputUsdc * DEFAULT_TRADE_FEE_BPS) / 10000;
+              const netUsdc = Math.max(0, inputUsdc - feeUsdc);
+              const outTokenAmount = netUsdc / tradeTokenPrice;
+              setQuoteSell({
+                token: tradeTokenSymbol,
+                side: "BUY",
+                price: tradeTokenPrice,
+                feeBps: DEFAULT_TRADE_FEE_BPS,
+                feeUsdc,
+                inputUsdc,
+                netUsdc,
+                outTokenAmount,
+                outUsdc: null,
+                slippageBps,
+                expiresInSec: 10,
+                source: "local_fallback"
+              });
+            } else {
+              const grossUsdc = n * tradeTokenPrice;
+              const feeUsdc = (grossUsdc * DEFAULT_TRADE_FEE_BPS) / 10000;
+              const outUsdc = Math.max(0, grossUsdc - feeUsdc);
+              setQuoteSell({
+                token: tradeTokenSymbol,
+                side: "SELL",
+                price: tradeTokenPrice,
+                feeBps: DEFAULT_TRADE_FEE_BPS,
+                feeUsdc,
+                inputUsdc: grossUsdc,
+                netUsdc: outUsdc,
+                outTokenAmount: n,
+                outUsdc,
+                slippageBps,
+                expiresInSec: 10,
+                source: "local_fallback"
+              });
+            }
           } else {
             setQuoteSell(null);
           }
@@ -618,7 +639,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [ethAmount, slippageBps, currentUserId, tradeTokenSymbol, tradeTokenPrice]);
+  }, [tradeAmount, slippageBps, currentUserId, tradeTokenSymbol, tradeTokenPrice, side]);
 
   useEffect(() => {
     let cancelled = false;
@@ -992,33 +1013,34 @@ export default function App() {
       const provider = await getProvider();
       if (!provider?.request) throw new Error("wallet_provider_unavailable");
 
-      const nEth = Number(ethAmount || 0);
-      if (!(nEth > 0)) throw new Error("invalid_eth_amount");
+      const nInput = Number(tradeAmount || 0);
+      if (!(nInput > 0)) throw new Error("invalid_trade_amount");
 
       let tokenIn;
       let tokenOut;
       let amountInRaw;
       let minOutRaw;
       const selectedIsNative = String(tradeTokenAddress || "").toLowerCase() === ETH_ADDRESS.toLowerCase();
+      const autoVenue = selectedIsNative && onchainConfig?.uniswapV4?.enabled ? "v4" : "v3";
 
       if (side === "BUY") {
         if (!buyModel) throw new Error("quote_missing_for_buy");
         tokenIn = usdcAddress;
         tokenOut = tradeTokenAddress || ETH_ADDRESS;
-        amountInRaw = parseUnits(buyModel.requiredUsdc.toFixed(6), 6);
-        minOutRaw = parseUnits(buyModel.minOutEth.toFixed(6), tradeTokenDecimals);
+        amountInRaw = parseUnits(nInput.toFixed(6), 6);
+        minOutRaw = parseUnits(buyModel.minOutToken.toFixed(6), tradeTokenDecimals);
       } else {
         if (!sellModel) throw new Error("quote_missing_for_sell");
         tokenIn = tradeTokenAddress || ETH_ADDRESS;
         tokenOut = usdcAddress;
-        amountInRaw = parseUnits(nEth.toFixed(6), tradeTokenDecimals);
+        amountInRaw = parseUnits(nInput.toFixed(6), tradeTokenDecimals);
         minOutRaw = parseUnits(sellModel.minOutUsdc.toFixed(6), 6);
       }
       if (String(tokenIn || "").toLowerCase() === String(tokenOut || "").toLowerCase()) {
         throw new Error("same_token_pair_not_allowed");
       }
 
-      if (venue === "v3") {
+      if (autoVenue === "v3") {
         setStatus("Fetching onchain quote...");
         const quotedOut = await quoteV3ExactIn(provider, v3QuoterAddress, tokenIn, tokenOut, amountInRaw, v3PoolFee);
         if (quotedOut && quotedOut > 0n) {
@@ -1037,7 +1059,7 @@ export default function App() {
         }
       }
 
-      if (side === "SELL" && venue === "v4") {
+      if (side === "SELL" && autoVenue === "v4") {
         // Until a real v4 quote path is wired, do not enforce model-based minOut for sell.
         minOutRaw = 0n;
       }
@@ -1122,7 +1144,7 @@ export default function App() {
 
       if (side === "SELL" && selectedIsNative) {
         txValue = `0x${amountInRaw.toString(16)}`;
-        if (venue === "v4") {
+        if (autoVenue === "v4") {
           const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
           swapData = encodeFunctionData({
             abi: USER_TRADE_ROUTER_ABI,
@@ -1136,7 +1158,7 @@ export default function App() {
             args: [tokenOut, minOutRaw, walletAddress]
           });
         }
-      } else if (venue === "v4") {
+      } else if (autoVenue === "v4") {
         const v4Payload = buildV4CommandsInputs(tokenIn, tokenOut, amountInRaw, minOutRaw);
         swapData = encodeFunctionData({
           abi: USER_TRADE_ROUTER_ABI,
@@ -1157,7 +1179,7 @@ export default function App() {
         data: appendBuilderDataSuffix(swapData, builderDataSuffix),
         value: txValue
       };
-      const minSwapGas = venue === "v4" ? 280000n : side === "SELL" ? 220000n : 180000n;
+      const minSwapGas = autoVenue === "v4" ? 280000n : side === "SELL" ? 220000n : 180000n;
       const swapGas = await estimateGasWithBuffer(provider, swapReq, {
         bufferBps: 3000,
         minGas: minSwapGas,
@@ -1409,17 +1431,8 @@ export default function App() {
                     </Button>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button variant={venue === "v3" ? "default" : "outline"} onClick={() => setVenue("v3")} disabled={trading}>
-                      Route V3
-                    </Button>
-                    <Button
-                      variant={venue === "v4" ? "default" : "outline"}
-                      onClick={() => setVenue("v4")}
-                      disabled={trading || !onchainConfig?.uniswapV4?.enabled}
-                    >
-                      Route V4
-                    </Button>
+                  <div className="rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-xs text-zinc-400">
+                    Routing: Auto (best available path)
                   </div>
 
                   <div className="space-y-2">
@@ -1429,16 +1442,16 @@ export default function App() {
                       type="number"
                       step="0.0001"
                       min="0"
-                      value={ethAmount}
-                      onChange={(e) => setEthAmount(e.target.value)}
-                      placeholder="0.01"
+                      value={tradeAmount}
+                      onChange={(e) => setTradeAmount(e.target.value)}
+                      placeholder={side === "BUY" ? "10" : "0.01"}
                     />
                     <div className="mt-2 grid grid-cols-4 gap-2">
-                      {["0.0001", "0.001", "0.01", "0.1"].map((amount) => (
+                      {(side === "BUY" ? ["10", "25", "50", "100"] : ["0.0001", "0.001", "0.01", "0.1"]).map((amount) => (
                         <Button
                           key={amount}
-                          variant={ethAmount === amount ? "default" : "outline"}
-                          onClick={() => setEthAmount(amount)}
+                          variant={tradeAmount === amount ? "default" : "outline"}
+                          onClick={() => setTradeAmount(amount)}
                           disabled={trading}
                         >
                           {amount}
@@ -1486,7 +1499,7 @@ export default function App() {
                     {side === "BUY" ? (
                       <div className="mt-1 flex items-center justify-between">
                         <span className="text-zinc-400">Estimated cost</span>
-                        <span>{buyModel ? `${buyModel.requiredUsdc.toFixed(2)} USDC` : "-"}</span>
+                        <span>{buyModel ? `${buyModel.inputUsdc.toFixed(2)} USDC` : "-"}</span>
                       </div>
                     ) : (
                       <div className="mt-1 flex items-center justify-between">
@@ -1499,7 +1512,7 @@ export default function App() {
                       <span>
                         {side === "BUY"
                           ? buyModel
-                            ? `${buyModel.minOutEth.toFixed(6)} ${tradeTokenSymbol}`
+                            ? `${buyModel.minOutToken.toFixed(6)} ${tradeTokenSymbol}`
                             : "-"
                           : sellModel
                             ? `${sellModel.minOutUsdc.toFixed(2)} USDC`

@@ -239,6 +239,16 @@ function formatUsd(v) {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
 }
 
+function normalizeMiniAppUser(rawUser) {
+  if (!rawUser || typeof rawUser !== "object") return null;
+  const fid = Number(rawUser.fid || 0) || null;
+  const username = String(rawUser.username || rawUser.handle || rawUser.userName || "").trim() || null;
+  const displayName = String(rawUser.displayName || rawUser.display_name || rawUser.name || "").trim() || null;
+  const pfpUrl = String(rawUser.pfpUrl || rawUser.pfp_url || rawUser?.pfp?.url || "").trim() || null;
+  const bio = String(rawUser.bio || rawUser?.profile?.bio?.text || "").trim() || null;
+  return { fid, username, displayName, pfpUrl, bio };
+}
+
 function mapWalletSummaryToHomeVM(summary, walletAddress, socialProfile, miniAppUser) {
   const wallet = summary?.wallet || {};
   return {
@@ -564,7 +574,7 @@ export default function App() {
     async function syncMiniAppIdentity() {
       try {
         const ctx = await waitContextWithRetry();
-        const ctxUser = ctx?.user || null;
+        const ctxUser = normalizeMiniAppUser(ctx?.user || null);
         const ctxFid = Number(ctxUser?.fid || 0) || null;
         if (!cancelled) setMiniAppUser(ctxUser);
 

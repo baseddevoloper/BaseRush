@@ -2837,11 +2837,40 @@ const server = createServer(async (req, res) => {
     const body = await parseBody(req);
     const walletAddress = String(body.walletAddress || "").trim();
     const miniappUser = body.miniappUser && typeof body.miniappUser === "object" ? body.miniappUser : {};
-    const inputFid = Number(body.fid || miniappUser.fid || 0) || null;
-    const inputUsername = String(body.username || miniappUser.username || "").trim() || null;
-    const inputDisplayName = String(body.displayName || miniappUser.displayName || "").trim() || null;
-    const inputPfpUrl = String(body.pfpUrl || miniappUser.pfpUrl || "").trim() || null;
-    const inputBio = String(body.bio || "").trim() || null;
+    const miniFid = Number(miniappUser.fid || 0) || null;
+    const miniUsername =
+      String(
+        miniappUser.username ||
+        miniappUser.handle ||
+        miniappUser.userName ||
+        ""
+      ).trim() || null;
+    const miniDisplayName =
+      String(
+        miniappUser.displayName ||
+        miniappUser.display_name ||
+        miniappUser.name ||
+        ""
+      ).trim() || null;
+    const miniPfpUrl =
+      String(
+        miniappUser.pfpUrl ||
+        miniappUser.pfp_url ||
+        miniappUser?.pfp?.url ||
+        ""
+      ).trim() || null;
+    const miniBio =
+      String(
+        miniappUser.bio ||
+        miniappUser?.profile?.bio?.text ||
+        ""
+      ).trim() || null;
+
+    const inputFid = Number(body.fid || miniFid || 0) || null;
+    const inputUsername = String(body.username || miniUsername || "").trim() || null;
+    const inputDisplayName = String(body.displayName || miniDisplayName || "").trim() || null;
+    const inputPfpUrl = String(body.pfpUrl || miniPfpUrl || "").trim() || null;
+    const inputBio = String(body.bio || miniBio || "").trim() || null;
     const authAddress = String(body.authAddress || "").trim() || null;
     const normalizedAddress = walletAddress || authAddress || "";
     const remoteByAddress = normalizedAddress ? await fetchFarcasterProfileByAddress(normalizedAddress) : null;

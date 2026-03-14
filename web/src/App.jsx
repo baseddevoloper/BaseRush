@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Home,
   Loader2,
+  Search,
   Settings,
   Wallet as WalletIcon
 } from "lucide-react";
@@ -764,10 +765,10 @@ export default function App() {
   const canTrade = walletConnected && !trading && !!routerAddress && quoteReady;
 
   return (
-    <div className="min-h-dvh bg-zinc-950 text-zinc-100">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,#27272a_0%,#0a0a0a_46%,#000000_100%)]" />
+    <div className="min-h-dvh bg-[#090d1a] text-zinc-100">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_0%,#8b5cf6_0%,#4338ca_30%,#111827_58%,#040712_100%)]" />
       <div className="relative mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-24 pt-4">
-        <Card className="border-white/10 bg-zinc-900/70 backdrop-blur">
+        <Card className="overflow-hidden border-white/20 bg-gradient-to-br from-violet-500/50 via-indigo-500/35 to-slate-900/60 shadow-[0_24px_80px_-28px_rgba(124,58,237,0.95)] backdrop-blur-xl">
           <CardHeader className="space-y-3 pb-4">
             <div className="flex items-center justify-between">
               <div>
@@ -777,11 +778,11 @@ export default function App() {
               <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-lg border border-white/10 bg-black/30 px-2 py-1.5">
+              <div className="rounded-xl border border-white/20 bg-black/25 px-3 py-2">
                 <p className="text-zinc-500">Wallet</p>
                 <p className="truncate">{walletConnected ? shortAddr(walletAddress) : "Not connected"}</p>
               </div>
-              <div className="rounded-lg border border-white/10 bg-black/30 px-2 py-1.5">
+              <div className="rounded-xl border border-white/20 bg-black/25 px-3 py-2">
                 <p className="text-zinc-500">Wallet provider</p>
                 <p>{miniAppDetected ? "Injected" : "Not detected"}</p>
               </div>
@@ -792,24 +793,28 @@ export default function App() {
         <div className="mt-3 flex-1">
           {activeTab === "home" && (
             <div className="space-y-3">
-              <Card className="border-white/10 bg-zinc-900/80">
+              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Token Search</CardTitle>
                   <CardDescription>Search by symbol or contract.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  <Input
-                    value={tokenQuery}
-                    onChange={(e) => setTokenQuery(e.target.value)}
-                    placeholder="Search token or paste contract"
-                  />
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                    <Input
+                      className="h-11 rounded-xl border-white/15 bg-black/35 pl-9"
+                      value={tokenQuery}
+                      onChange={(e) => setTokenQuery(e.target.value)}
+                      placeholder="Search token or paste contract"
+                    />
+                  </div>
                   <div className="max-h-56 space-y-2 overflow-auto pr-1">
                     {searchTokens.slice(0, 8).map((t) => (
                       <button
                         key={t.symbol}
                         type="button"
                         onClick={() => setInsightToken(t.symbol)}
-                        className={`w-full rounded-xl border px-3 py-2 text-left ${insightToken === t.symbol ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-black/30"}`}
+                        className={`w-full rounded-2xl border px-3 py-2 text-left transition-all ${insightToken === t.symbol ? "border-violet-400/70 bg-violet-500/20 shadow-[0_12px_36px_-16px_rgba(167,139,250,0.95)]" : "border-white/15 bg-black/30 hover:border-white/30"}`}
                       >
                         <div className="flex items-center justify-between">
                           <div>
@@ -836,7 +841,7 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              <Card className="border-white/10 bg-zinc-900/80">
+              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Market Overview</CardTitle>
                   <CardDescription>Popular and meme tokens on Base.</CardDescription>
@@ -856,7 +861,7 @@ export default function App() {
                         key={t.symbol}
                         type="button"
                         onClick={() => setInsightToken(t.symbol)}
-                        className={`rounded-xl border px-3 py-2 text-left ${insightToken === t.symbol ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-black/30"}`}
+                        className={`rounded-2xl border px-3 py-2 text-left transition-all ${insightToken === t.symbol ? "border-violet-400/70 bg-violet-500/20 shadow-[0_12px_36px_-16px_rgba(167,139,250,0.95)]" : "border-white/15 bg-black/30 hover:border-white/30"}`}
                       >
                         <p className="text-sm font-medium">{t.symbol}</p>
                         <p className="text-xs text-zinc-400">{t.name}</p>
@@ -873,7 +878,7 @@ export default function App() {
               </Card>
 
               {!walletConnected && (
-                <Card className="border-white/10 bg-zinc-900/80">
+                <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                   <CardContent className="pt-5">
                     <Button className="w-full" onClick={handleConnectWallet} disabled={connecting}>
                       {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WalletIcon className="mr-2 h-4 w-4" />}
@@ -883,7 +888,7 @@ export default function App() {
                 </Card>
               )}
 
-              <Card className="border-white/10 bg-zinc-900/80">
+              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Quick Trade</CardTitle>
                   <CardDescription>Fast buy/sell flow from your connected wallet.</CardDescription>
@@ -911,9 +916,10 @@ export default function App() {
                     </Button>
                   </div>
 
-                  <div>
+                  <div className="space-y-2">
                     <p className="mb-1 text-xs text-zinc-400">ETH Amount</p>
                     <Input
+                      className="h-11 rounded-xl border-white/15 bg-black/35"
                       type="number"
                       step="0.0001"
                       min="0"
@@ -935,7 +941,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div>
+                  <div className="space-y-2">
                     <p className="mb-1 text-xs text-zinc-400">Slippage</p>
                     <div className="grid grid-cols-4 gap-2">
                       {["1", "3", "10", "custom"].map((v) => (
@@ -951,7 +957,7 @@ export default function App() {
                     </div>
                     {slippageMode === "custom" && (
                       <Input
-                        className="mt-2"
+                        className="mt-2 h-11 rounded-xl border-white/15 bg-black/35"
                         type="number"
                         step="0.1"
                         min="0.1"
@@ -963,7 +969,7 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm">
+                  <div className="rounded-2xl border border-white/20 bg-black/35 p-3 text-sm">
                     <div className="flex items-center justify-between">
                       <span className="text-zinc-400">Pair</span>
                       <span className="inline-flex items-center gap-1">
@@ -1011,13 +1017,13 @@ export default function App() {
 
           {activeTab === "activity" && (
             <div className="space-y-3">
-              <Card className="border-white/10 bg-zinc-900/80">
+              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Trade Activity</CardTitle>
                   <CardDescription>Latest execution state and transaction links.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
-                  <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                  <div className="rounded-2xl border border-white/20 bg-black/35 p-3">
                     <div className="flex items-center gap-2">
                       {error ? <CircleAlert className="h-4 w-4 text-rose-400" /> : <CircleCheck className="h-4 w-4 text-emerald-400" />}
                       <span>{error ? "Last action failed" : "System ready"}</span>
@@ -1025,7 +1031,7 @@ export default function App() {
                     <p className="mt-2 text-xs text-zinc-400">{error || status || "No trade action yet."}</p>
                   </div>
 
-                  <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                  <div className="rounded-2xl border border-white/20 bg-black/35 p-3">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-zinc-400">Onchain PnL</span>
                       <span className={(Number(onchainPnl?.total || 0) >= 0) ? "text-emerald-400" : "text-rose-400"}>
@@ -1038,7 +1044,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                  <div className="rounded-2xl border border-white/20 bg-black/35 p-3">
                     <div className="mb-2 flex items-center justify-between text-xs">
                       <span className="text-zinc-400">{insightToken} Holders (App)</span>
                       <span className="text-zinc-500">Top 6</span>
@@ -1048,7 +1054,7 @@ export default function App() {
                         {holderBoard.slice(0, 6).map((h) => (
                           <a
                             key={h.userId}
-                            className="rounded-lg border border-white/10 bg-zinc-900/70 px-2 py-1.5"
+                            className="rounded-lg border border-white/20 bg-zinc-900/70 px-2 py-1.5 transition-all hover:border-violet-400/50"
                             href={h.walletAddress ? `https://basescan.org/address/${h.walletAddress}` : "#"}
                             target={h.walletAddress ? "_blank" : undefined}
                             rel={h.walletAddress ? "noreferrer" : undefined}
@@ -1090,13 +1096,13 @@ export default function App() {
 
           {activeTab === "wallet" && (
             <div className="space-y-3">
-              <Card className="border-white/10 bg-zinc-900/80">
+              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Wallet Session</CardTitle>
                   <CardDescription>Connection and Base network trade config.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
-                  <div className="rounded-xl border border-white/10 bg-black/30 p-3 space-y-1">
+                  <div className="space-y-1 rounded-2xl border border-white/20 bg-black/35 p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-zinc-400">Wallet</span>
                       <span>{walletConnected ? shortAddr(walletAddress) : "Not connected"}</span>
@@ -1136,7 +1142,7 @@ export default function App() {
 
       <div className="fixed inset-x-0 bottom-0 z-40">
         <div className="mx-auto max-w-md px-4 pb-4">
-          <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-zinc-900/95 p-2 backdrop-blur">
+          <div className="grid grid-cols-3 gap-2 rounded-3xl border border-white/20 bg-black/60 p-2 backdrop-blur-xl shadow-[0_20px_50px_-20px_rgba(99,102,241,0.85)]">
             <Button variant={activeTab === "home" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("home")}>
               <Home className="mr-1.5 h-4 w-4" />
               Home

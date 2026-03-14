@@ -540,10 +540,9 @@ export default function App() {
       if (active) setMiniAppDetected(hasInjected);
 
       try {
-        const out = await getJson("/api/onchain/config");
+        const out = await getJson(`/api/onchain/config?_t=${Date.now()}`);
         if (!active) return;
         setOnchainConfig(out.onchain || null);
-        if (out?.onchain?.uniswapV4?.enabled) setVenue("v4");
       } catch {
         if (active) setOnchainConfig(null);
       }
@@ -656,6 +655,23 @@ export default function App() {
     loadFeaturedTokens();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshOnchainConfig() {
+      try {
+        const out = await getJson(`/api/onchain/config?_t=${Date.now()}`);
+        if (!cancelled) setOnchainConfig(out?.onchain || null);
+      } catch {
+        // keep last known config
+      }
+    }
+    const timer = setInterval(refreshOnchainConfig, 12000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
     };
   }, []);
 

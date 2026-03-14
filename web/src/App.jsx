@@ -534,6 +534,11 @@ export default function App() {
         }
       }
 
+      if (side === "SELL" && venue === "v4") {
+        // Until a real v4 quote path is wired, do not enforce model-based minOut for sell.
+        minOutRaw = 0n;
+      }
+
       let needsApprove = false;
       if (side === "BUY") {
         let currentAllowance = 0n;

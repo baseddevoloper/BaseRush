@@ -192,6 +192,22 @@ async function providerRequestWithTimeout(provider, payload, timeoutMs = 45000) 
   ]);
 }
 
+async function buildLowFeeParams(provider) {
+  try {
+    const gasPriceRaw = await provider.request({ method: "eth_gasPrice", params: [] });
+    const gasPrice = BigInt(String(gasPriceRaw || "0x0"));
+    // keep fees tight on Base; wallet may otherwise show inflated max cost
+    const maxFeePerGas = gasPrice > 0n ? (gasPrice * 115n) / 100n : 1_000_000n;
+    const maxPriorityFeePerGas = gasPrice > 0n ? gasPrice / 20n : 1_000n; // ~5%
+    return {
+      maxFeePerGas: `0x${(maxFeePerGas > 0n ? maxFeePerGas : 1n).toString(16)}`,
+      maxPriorityFeePerGas: `0x${(maxPriorityFeePerGas > 0n ? maxPriorityFeePerGas : 1n).toString(16)}`
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function waitForAllowance(provider, token, owner, spender, requiredAmount, timeoutMs = 90000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -1156,6 +1172,8 @@ export default function App() {
             data: appendBuilderDataSuffix(approveData, builderDataSuffix),
             value: "0x0"
           };
+          const approveFeeParams = await buildLowFeeParams(provider);
+          Object.assign(approveReq, approveFeeParams);
           const approveGas = await estimateGasWithBuffer(provider, approveReq, {
             bufferBps: 1000,
             minGas: 45000n,
@@ -1231,6 +1249,8 @@ export default function App() {
         data: appendBuilderDataSuffix(swapData, builderDataSuffix),
         value: txValue
       };
+      const swapFeeParams = await buildLowFeeParams(provider);
+      Object.assign(swapReq, swapFeeParams);
       const minSwapGas = autoVenue === "v4" ? 240000n : side === "SELL" ? 160000n : 130000n;
       const swapGas = await estimateGasWithBuffer(provider, swapReq, {
         bufferBps: 1200,

@@ -239,10 +239,17 @@ function formatUsd(v) {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
 }
 
-function mapWalletSummaryToHomeVM(summary, walletAddress) {
+function mapWalletSummaryToHomeVM(summary, walletAddress, socialProfile) {
   const wallet = summary?.wallet || {};
   return {
-    handle: walletAddress ? `@${shortAddr(walletAddress)}` : "@guest",
+    handle:
+      socialProfile?.handle ||
+      (socialProfile?.displayName ? `@${socialProfile.displayName}` : null) ||
+      (walletAddress ? `@${shortAddr(walletAddress)}` : "@guest"),
+    displayName:
+      socialProfile?.displayName ||
+      socialProfile?.handle?.replace(/^@/, "") ||
+      (walletAddress ? shortAddr(walletAddress) : "Guest"),
     balance: Number(wallet.usdc || 0),
     pnl24h: Number(wallet.onchainTotalPnl || wallet.totalPnl || 0),
     connected: Boolean(walletAddress),
@@ -326,7 +333,7 @@ function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProf
   const winRate = total > 0 ? (wins * 100) / total : 0;
   return {
     handle: socialProfile?.handle || (walletAddress ? `@${shortAddr(walletAddress)}` : "@guest"),
-    displayName: socialProfile?.displayName || "BaseRush User",
+    displayName: socialProfile?.displayName || socialProfile?.handle?.replace(/^@/, "") || "BaseRush User",
     avatarUrl: socialProfile?.avatarUrl || "",
     bio: socialProfile?.bio || "Base network social trader profile",
     verified: socialProfile?.verified || { farcaster: false, baseapp: false, twitter: false },
@@ -1057,7 +1064,10 @@ export default function App() {
   const tradeButtonLabel = useMemo(() => (side === "BUY" ? "Buy ETH" : "Sell ETH"), [side]);
   const quoteReady = side === "BUY" ? !!buyModel : !!sellModel;
   const canTrade = walletConnected && !trading && !!routerAddress && quoteReady;
-  const homeVM = useMemo(() => mapWalletSummaryToHomeVM(walletSummary, walletAddress), [walletSummary, walletAddress]);
+  const homeVM = useMemo(
+    () => mapWalletSummaryToHomeVM(walletSummary, walletAddress, socialProfile),
+    [walletSummary, walletAddress, socialProfile]
+  );
   const friendsVM = useMemo(
     () => mapInsightsToFriendsVM(friendsRows, globalFeedItems, followingIds),
     [friendsRows, globalFeedItems, followingIds]
@@ -1100,13 +1110,13 @@ export default function App() {
       <div className="relative mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-24 pt-4">
         <Card className="overflow-hidden border-white/20 bg-gradient-to-br from-violet-500/50 via-indigo-500/35 to-slate-900/60 shadow-[0_24px_80px_-28px_rgba(124,58,237,0.95)] backdrop-blur-xl">
           <CardHeader className="space-y-3 pb-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardDescription className="text-zinc-400">BaseRush</CardDescription>
-                <CardTitle className="text-2xl">{homeVM.handle}</CardTitle>
-              </div>
-              <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
-            </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardDescription className="text-zinc-400">BaseRush</CardDescription>
+                    <CardTitle className="text-2xl">{homeVM.displayName}</CardTitle>
+                  </div>
+                  <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
+                </div>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="rounded-xl border border-white/20 bg-black/25 px-3 py-2">
                 <p className="text-zinc-500">Wallet</p>

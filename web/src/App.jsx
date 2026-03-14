@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity as ActivityIcon,
   ArrowDownUp,
+  Bell,
   CircleAlert,
   CircleCheck,
   ExternalLink,
+  Newspaper,
   Home,
   Loader2,
   Search,
-  Settings,
+  User,
+  Users,
   Wallet as WalletIcon
 } from "lucide-react";
 import { useAccount } from "wagmi";
@@ -231,6 +233,109 @@ function appendBuilderDataSuffix(calldata, suffix) {
   return `0x${body}${suffixBody}`;
 }
 
+function formatUsd(v) {
+  const n = Number(v || 0);
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+}
+
+function mapWalletSummaryToHomeVM(summary, walletAddress) {
+  const wallet = summary?.wallet || {};
+  return {
+    handle: walletAddress ? `@${shortAddr(walletAddress)}` : "@guest",
+    balance: Number(wallet.usdc || 0),
+    pnl24h: Number(wallet.onchainTotalPnl || wallet.totalPnl || 0),
+    connected: Boolean(walletAddress),
+    positions: summary?.positions || {},
+    recentTrades: summary?.recentTrades || []
+  };
+}
+
+function mapInsightsToFriendsVM(friends, globalFeedItems, followingIds) {
+  const byUser = new Map();
+  (globalFeedItems || []).forEach((item) => {
+    const key = String(item.userId || "");
+    if (!key) return;
+    if (!byUser.has(key)) {
+      byUser.set(key, {
+        userId: key,
+        handle: item.handle || `@${key}`,
+        trades: 0,
+        win: 0,
+        loss: 0,
+        volume: 0
+      });
+    }
+    const row = byUser.get(key);
+    row.trades += 1;
+    row.volume += Number(item.amount || 0);
+    if (Number(item.pnl || 0) >= 0) row.win += 1;
+    else row.loss += 1;
+  });
+
+  const mappedAll = Array.from(byUser.values()).map((row) => ({
+    ...row,
+    winRate: row.trades > 0 ? (row.win * 100) / row.trades : 0,
+    pnl: Number(
+      (friends || []).find((f) => f.userId === row.userId)?.pnl ||
+      0
+    ),
+    followers: Number((friends || []).find((f) => f.userId === row.userId)?.followers || 0),
+    following: (followingIds || []).includes(row.userId)
+  }));
+
+  (friends || []).forEach((f) => {
+    if (mappedAll.some((x) => x.userId === f.userId)) return;
+    mappedAll.push({
+      userId: f.userId,
+      handle: f.handle || `@${f.userId}`,
+      trades: Number(f.trades || 0),
+      win: 0,
+      loss: 0,
+      winRate: 0,
+      volume: 0,
+      pnl: Number(f.pnl || 0),
+      followers: Number(f.followers || 0),
+      following: true
+    });
+  });
+
+  return mappedAll;
+}
+
+function mapTradeEventsToFeedVM(feedItems) {
+  return (feedItems || []).map((item) => ({
+    id: item.id,
+    userId: item.userId,
+    handle: item.handle || `@${item.userId || "trader"}`,
+    side: String(item.side || "").toUpperCase(),
+    token: String(item.token || "").toUpperCase(),
+    text: item.text || "trade",
+    amount: Number(item.amount || 0),
+    ts: item.ts || "now",
+    pnl: Number(item.pnl || 0),
+    at: item.at || null
+  }));
+}
+
+function mapProfileStatsVM({ walletSummary, feedItems, walletAddress }) {
+  const wallet = walletSummary?.wallet || {};
+  const myFeed = (feedItems || []).filter((x) => x.userId === "guest");
+  const wins = myFeed.filter((x) => Number(x.pnl || 0) >= 0).length;
+  const total = myFeed.length;
+  const winRate = total > 0 ? (wins * 100) / total : 0;
+  return {
+    handle: walletAddress ? `@${shortAddr(walletAddress)}` : "@guest",
+    bio: "Base network social trader profile",
+    totalTrades: Number(walletSummary?.recentTrades?.length || total || 0),
+    followers: 0,
+    following: 0,
+    winRate,
+    totalPnl: Number(wallet.onchainTotalPnl || wallet.totalPnl || 0),
+    realizedPnl: Number(wallet.onchainRealizedPnl || wallet.realizedPnl || 0),
+    unrealizedPnl: Number(wallet.onchainUnrealizedPnl || wallet.unrealizedPnl || 0)
+  };
+}
+
 export default function App() {
   const { address: wagmiAddress, isConnected: wagmiConnected, connector } = useAccount();
 
@@ -253,6 +358,7 @@ export default function App() {
   const [lastApproveTx, setLastApproveTx] = useState("");
   const [lastSwapTx, setLastSwapTx] = useState("");
   const [activeTab, setActiveTab] = useState("home");
+  const [tradePanelOpen, setTradePanelOpen] = useState(false);
   const [holderBoard, setHolderBoard] = useState([]);
   const [onchainPnl, setOnchainPnl] = useState(null);
   const [featuredTokens, setFeaturedTokens] = useState({ popular: [], meme: [] });
@@ -260,6 +366,15 @@ export default function App() {
   const [insightToken, setInsightToken] = useState("ETH");
   const [tokenQuery, setTokenQuery] = useState("");
   const [searchTokens, setSearchTokens] = useState([]);
+  const [walletSummary, setWalletSummary] = useState(null);
+  const [friendsRows, setFriendsRows] = useState([]);
+  const [friendsFilter, setFriendsFilter] = useState("all");
+  const [friendsQuery, setFriendsQuery] = useState("");
+  const [feedScope, setFeedScope] = useState("global");
+  const [feedItems, setFeedItems] = useState([]);
+  const [globalFeedItems, setGlobalFeedItems] = useState([]);
+  const [followingIds, setFollowingIds] = useState([]);
+  const [newTradesCount, setNewTradesCount] = useState(0);
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -459,6 +574,92 @@ export default function App() {
       clearInterval(timer);
     };
   }, [walletAddress, lastSwapTx, insightToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWalletSummary() {
+      if (!walletAddress) {
+        if (!cancelled) setWalletSummary(null);
+        return;
+      }
+      try {
+        const out = await getJson(`/api/wallet/summary?userId=guest&walletAddress=${encodeURIComponent(walletAddress)}`);
+        if (!cancelled) setWalletSummary(out || null);
+      } catch {
+        if (!cancelled) setWalletSummary(null);
+      }
+    }
+    loadWalletSummary();
+    const timer = setInterval(loadWalletSummary, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [walletAddress, lastSwapTx]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFriends() {
+      try {
+        const out = await getJson("/api/social/friends?userId=guest&limit=30");
+        if (!cancelled) setFriendsRows(Array.isArray(out?.friends) ? out.friends : []);
+      } catch {
+        if (!cancelled) setFriendsRows([]);
+      }
+    }
+    loadFriends();
+    const timer = setInterval(loadFriends, 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let previousTop = "";
+    async function loadFeed() {
+      try {
+        const current = await getJson(`/api/feed?userId=guest&scope=${feedScope}&limit=40`);
+        if (cancelled) return;
+        const items = Array.isArray(current?.items) ? current.items : [];
+        setFeedItems(items);
+        setFollowingIds(Array.isArray(current?.following) ? current.following : []);
+        if (items[0]?.id && previousTop && items[0].id !== previousTop) {
+          const idx = items.findIndex((x) => x.id === previousTop);
+          const delta = idx > 0 ? idx : 1;
+          setNewTradesCount((c) => Math.min(99, c + delta));
+        }
+        previousTop = items[0]?.id || previousTop;
+      } catch {
+        if (!cancelled) setFeedItems([]);
+      }
+    }
+    loadFeed();
+    const timer = setInterval(loadFeed, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [feedScope]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadGlobalFeed() {
+      try {
+        const out = await getJson("/api/feed?userId=guest&scope=global&limit=80");
+        if (!cancelled) setGlobalFeedItems(Array.isArray(out?.items) ? out.items : []);
+      } catch {
+        if (!cancelled) setGlobalFeedItems([]);
+      }
+    }
+    loadGlobalFeed();
+    const timer = setInterval(loadGlobalFeed, 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   async function handleConnectWallet() {
     setConnecting(true);
@@ -763,6 +964,42 @@ export default function App() {
   const tradeButtonLabel = useMemo(() => (side === "BUY" ? "Buy ETH" : "Sell ETH"), [side]);
   const quoteReady = side === "BUY" ? !!buyModel : !!sellModel;
   const canTrade = walletConnected && !trading && !!routerAddress && quoteReady;
+  const homeVM = useMemo(() => mapWalletSummaryToHomeVM(walletSummary, walletAddress), [walletSummary, walletAddress]);
+  const friendsVM = useMemo(
+    () => mapInsightsToFriendsVM(friendsRows, globalFeedItems, followingIds),
+    [friendsRows, globalFeedItems, followingIds]
+  );
+  const feedVM = useMemo(() => mapTradeEventsToFeedVM(feedItems), [feedItems]);
+  const profileVM = useMemo(
+    () => mapProfileStatsVM({ walletSummary, feedItems: globalFeedItems, walletAddress }),
+    [walletSummary, globalFeedItems, walletAddress]
+  );
+
+  const filteredFriends = useMemo(() => {
+    let rows = [...friendsVM];
+    if (friendsFilter === "following") rows = rows.filter((x) => x.following);
+    if (friendsFilter === "most") rows = rows.sort((a, b) => (b.followers || 0) - (a.followers || 0));
+    if (friendsFilter === "win") rows = rows.sort((a, b) => (b.winRate || 0) - (a.winRate || 0));
+    const q = friendsQuery.trim().toLowerCase();
+    if (q) rows = rows.filter((x) => String(x.handle || "").toLowerCase().includes(q) || String(x.userId || "").toLowerCase().includes(q));
+    return rows.slice(0, 40);
+  }, [friendsVM, friendsFilter, friendsQuery]);
+
+  async function handleToggleFollow(traderId) {
+    try {
+      await fetch("/api/follow", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ userId: "guest", traderId })
+      });
+      const f = await getJson("/api/social/friends?userId=guest&limit=30");
+      setFriendsRows(Array.isArray(f?.friends) ? f.friends : []);
+      const g = await getJson(`/api/feed?userId=guest&scope=${feedScope}&limit=40`);
+      setFollowingIds(Array.isArray(g?.following) ? g.following : []);
+    } catch {
+      // non-blocking on UI
+    }
+  }
 
   return (
     <div className="min-h-dvh bg-[#090d1a] text-zinc-100">
@@ -773,7 +1010,7 @@ export default function App() {
             <div className="flex items-center justify-between">
               <div>
                 <CardDescription className="text-zinc-400">BaseRush</CardDescription>
-                <CardTitle className="text-2xl">Home</CardTitle>
+                <CardTitle className="text-2xl">{homeVM.handle}</CardTitle>
               </div>
               <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
             </div>
@@ -787,6 +1024,16 @@ export default function App() {
                 <p>{miniAppDetected ? "Injected" : "Not detected"}</p>
               </div>
             </div>
+            {activeTab === "home" ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="secondary" className="bg-white/15 text-white hover:bg-white/25">
+                  Deposit
+                </Button>
+                <Button className="bg-violet-600 text-white hover:bg-violet-500" onClick={() => setTradePanelOpen((v) => !v)}>
+                  {tradePanelOpen ? "Hide Trade" : "Trade"}
+                </Button>
+              </div>
+            ) : null}
           </CardHeader>
         </Card>
 
@@ -888,7 +1135,8 @@ export default function App() {
                 </Card>
               )}
 
-              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
+              {tradePanelOpen ? (
+                <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Quick Trade</CardTitle>
                   <CardDescription>Fast buy/sell flow from your connected wallet.</CardDescription>
@@ -1012,17 +1260,95 @@ export default function App() {
                   </Button>
                 </CardContent>
               </Card>
+              ) : null}
             </div>
           )}
 
-          {activeTab === "activity" && (
+          {activeTab === "friends" && (
             <div className="space-y-3">
               <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Trade Activity</CardTitle>
-                  <CardDescription>Latest execution state and transaction links.</CardDescription>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">Friends</CardTitle>
+                    <Users className="h-5 w-5 text-zinc-400" />
+                  </div>
+                  <CardDescription>Trader social layer and follow actions.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                    <Input
+                      className="h-11 rounded-xl border-white/15 bg-black/35 pl-9"
+                      value={friendsQuery}
+                      onChange={(e) => setFriendsQuery(e.target.value)}
+                      placeholder="Search traders or friends..."
+                    />
+                  </div>
+                  <div className="flex gap-2 overflow-auto pb-1">
+                    <Button variant={friendsFilter === "all" ? "default" : "outline"} onClick={() => setFriendsFilter("all")}>All Traders</Button>
+                    <Button variant={friendsFilter === "most" ? "default" : "outline"} onClick={() => setFriendsFilter("most")}>Most Copied</Button>
+                    <Button variant={friendsFilter === "win" ? "default" : "outline"} onClick={() => setFriendsFilter("win")}>Top Win-Rate</Button>
+                    <Button variant={friendsFilter === "following" ? "default" : "outline"} onClick={() => setFriendsFilter("following")}>Following</Button>
+                  </div>
+                  <div className="space-y-2">
+                    {filteredFriends.slice(0, 20).map((f) => (
+                      <div key={f.userId} className="rounded-2xl border border-white/20 bg-black/30 p-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-semibold">{f.handle}</p>
+                            <p className="text-xs text-zinc-400">{Number(f.trades || 0)} trades · WR {Number(f.winRate || 0).toFixed(1)}%</p>
+                          </div>
+                          <Button size="sm" variant={f.following ? "outline" : "default"} onClick={() => handleToggleFollow(f.userId)}>
+                            {f.following ? "Following" : "Follow"}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    {filteredFriends.length === 0 ? (
+                      <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-zinc-500">No trader found.</div>
+                    ) : null}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === "feed" && (
+            <div className="space-y-3">
+              <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">Feed</CardTitle>
+                    <Newspaper className="h-5 w-5 text-zinc-400" />
+                  </div>
+                  <CardDescription>Global/following social trade stream.</CardDescription>
+                  <div className="flex gap-2">
+                    <Button variant={feedScope === "global" ? "default" : "outline"} onClick={() => { setFeedScope("global"); setNewTradesCount(0); }}>
+                      Global
+                    </Button>
+                    <Button variant={feedScope === "following" ? "default" : "outline"} onClick={() => { setFeedScope("following"); setNewTradesCount(0); }}>
+                      Following
+                    </Button>
+                  </div>
+                  <p className="text-xs text-zinc-400">{newTradesCount} new trades detected</p>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
+                  <div className="space-y-2">
+                    {feedVM.slice(0, 12).map((row) => (
+                      <div key={row.id} className="rounded-xl border border-white/20 bg-black/35 p-3">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold">{row.handle}</p>
+                          <p className="text-xs text-zinc-500">{row.ts}</p>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between">
+                          <p className={`text-sm font-medium ${row.side === "BUY" ? "text-emerald-400" : row.side === "SELL" ? "text-rose-400" : "text-zinc-300"}`}>
+                            {row.side || "SWAP"} {row.token || ""}
+                          </p>
+                          <p className="text-sm">{formatUsd(row.amount)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                   <div className="rounded-2xl border border-white/20 bg-black/35 p-3">
                     <div className="flex items-center gap-2">
                       {error ? <CircleAlert className="h-4 w-4 text-rose-400" /> : <CircleCheck className="h-4 w-4 text-emerald-400" />}
@@ -1094,14 +1420,39 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === "wallet" && (
+          {activeTab === "profile" && (
             <div className="space-y-3">
               <Card className="border-white/20 bg-black/45 backdrop-blur-xl shadow-[0_16px_50px_-28px_rgba(129,140,248,0.9)]">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Wallet Session</CardTitle>
-                  <CardDescription>Connection and Base network trade config.</CardDescription>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-400/60 bg-violet-500/20">
+                      <User className="h-5 w-5 text-violet-300" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">{profileVM.handle}</CardTitle>
+                      <CardDescription>{profileVM.bio}</CardDescription>
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded-xl border border-white/20 bg-black/30 p-2">
+                      <p className="text-zinc-500">Trades</p>
+                      <p className="font-semibold">{profileVM.totalTrades}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/20 bg-black/30 p-2">
+                      <p className="text-zinc-500">Followers</p>
+                      <p className="font-semibold">{profileVM.followers}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/20 bg-black/30 p-2">
+                      <p className="text-zinc-500">Following</p>
+                      <p className="font-semibold">{profileVM.following}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-violet-400/40 bg-violet-500/10 p-3 text-xs">
+                    <p className="font-semibold">Copy Trade</p>
+                    <p className="text-zinc-400">Coming soon</p>
+                  </div>
                   <div className="space-y-1 rounded-2xl border border-white/20 bg-black/35 p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-zinc-400">Wallet</span>
@@ -1142,18 +1493,18 @@ export default function App() {
 
       <div className="fixed inset-x-0 bottom-0 z-40">
         <div className="mx-auto max-w-md px-4 pb-4">
-          <div className="grid grid-cols-3 gap-2 rounded-3xl border border-white/20 bg-black/60 p-2 backdrop-blur-xl shadow-[0_20px_50px_-20px_rgba(99,102,241,0.85)]">
+          <div className="grid grid-cols-4 gap-2 rounded-3xl border border-white/20 bg-black/60 p-2 backdrop-blur-xl shadow-[0_20px_50px_-20px_rgba(99,102,241,0.85)]">
             <Button variant={activeTab === "home" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("home")}>
-              <Home className="mr-1.5 h-4 w-4" />
-              Home
+              <Home className="h-4 w-4" />
             </Button>
-            <Button variant={activeTab === "activity" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("activity")}>
-              <ActivityIcon className="mr-1.5 h-4 w-4" />
-              Activity
+            <Button variant={activeTab === "friends" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("friends")}>
+              <Users className="h-4 w-4" />
             </Button>
-            <Button variant={activeTab === "wallet" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("wallet")}>
-              <Settings className="mr-1.5 h-4 w-4" />
-              Wallet
+            <Button variant={activeTab === "feed" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("feed")}>
+              <Newspaper className="h-4 w-4" />
+            </Button>
+            <Button variant={activeTab === "profile" ? "default" : "ghost"} className="h-10" onClick={() => setActiveTab("profile")}>
+              <User className="h-4 w-4" />
             </Button>
           </div>
         </div>

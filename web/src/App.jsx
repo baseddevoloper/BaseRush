@@ -592,30 +592,26 @@ export default function App() {
           String(authStatus?.userId || "").trim() ||
           (ctxFid ? `fc_${ctxFid}` : "guest");
 
-        if (!cancelled) setCurrentUserId(resolvedUserId);
-        if (!cancelled && authStatus?.address && !connectedAddress) {
-          setConnectedAddress(String(authStatus.address));
-        }
-
-        await fetch("/api/social/profile/sync", {
+        const session = await getJson("/api/session/resolve", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             userId: resolvedUserId,
-            profile: {
-              fid: authStatus?.fid || ctxFid,
-              username: ctxUser?.username || null,
-              displayName: ctxUser?.displayName || null,
-              pfpUrl: ctxUser?.pfpUrl || null,
-              address: authStatus?.address || null,
-              verified: {
-                farcaster: Boolean(authStatus?.authVerified || ctxFid),
-                baseapp: Boolean(authStatus?.address),
-                twitter: false
-              }
-            }
+            walletAddress: connectedAddress || walletAddress || "",
+            authAddress: authStatus?.address || "",
+            miniappUser: ctxUser || {},
+            fid: authStatus?.fid || ctxFid || null,
+            username: ctxUser?.username || null,
+            displayName: ctxUser?.displayName || null,
+            pfpUrl: ctxUser?.pfpUrl || null
           })
         }).catch(() => null);
+
+        if (!cancelled && session?.userId) setCurrentUserId(String(session.userId));
+        if (!cancelled && session?.profile && !socialProfile) setSocialProfile(session.profile);
+        if (!cancelled && (authStatus?.address || session?.auth?.address) && !connectedAddress) {
+          setConnectedAddress(String(authStatus?.address || session?.auth?.address));
+        }
       } catch {
         // ignore identity sync errors
       }

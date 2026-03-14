@@ -1904,6 +1904,15 @@ function findUserIdByFid(fid) {
   return "";
 }
 
+function findUserIdByAddress(address) {
+  const target = String(address || "").trim().toLowerCase();
+  if (!target) return "";
+  for (const [id, user] of db.users.entries()) {
+    if (String(user?.auth?.address || "").trim().toLowerCase() === target) return id;
+  }
+  return "";
+}
+
 async function enforceRequestAuth(req, userId) {
   if (!FC_AUTH_REQUIRED) return;
   const auth = await requireQuickAuth(req);
@@ -2758,6 +2767,55 @@ const server = createServer(async (req, res) => {
       copySettings,
       friends,
       referrals
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/session/resolve") {
+    const body = await parseBody(req);
+    const walletAddress = String(body.walletAddress || "").trim();
+    const miniappUser = body.miniappUser && typeof body.miniappUser === "object" ? body.miniappUser : {};
+    const fid = Number(body.fid || miniappUser.fid || 0) || null;
+    const username = String(body.username || miniappUser.username || "").trim() || null;
+    const displayName = String(body.displayName || miniappUser.displayName || "").trim() || null;
+    const pfpUrl = String(body.pfpUrl || miniappUser.pfpUrl || "").trim() || null;
+    const bio = String(body.bio || "").trim() || null;
+    const authAddress = String(body.authAddress || "").trim() || null;
+    const normalizedAddress = walletAddress || authAddress || "";
+
+    const byFid = fid ? findUserIdByFid(fid) : "";
+    const byAddress = normalizedAddress ? findUserIdByAddress(normalizedAddress) : "";
+    const resolvedUserId =
+      String(body.userId || "").trim() ||
+      byFid ||
+      byAddress ||
+      (fid ? `fc_${fid}` : normalizedAddress ? `wallet_${normalizedAddress.toLowerCase()}` : `guest`);
+
+    const user = getOrCreateUser(resolvedUserId);
+    user.auth = {
+      ...(user.auth || {}),
+      provider: fid ? "farcaster" : (user.auth?.provider || "guest"),
+      fid: fid || user.auth?.fid || null,
+      address: normalizedAddress || user.auth?.address || null,
+      username: username || user.auth?.username || null
+    };
+    user.profile = {
+      ...(user.profile || {}),
+      displayName: displayName || user.profile?.displayName || null,
+      pfpUrl: pfpUrl || user.profile?.pfpUrl || null,
+      bio: bio || user.profile?.bio || null,
+      verified: {
+        farcaster: Boolean(fid || user.profile?.verified?.farcaster),
+        baseapp: Boolean(normalizedAddress || user.profile?.verified?.baseapp),
+        twitter: Boolean(user.profile?.verified?.twitter)
+      }
+    };
+    persistProfilesToDisk();
+
+    return json(res, 200, {
+      ok: true,
+      userId: resolvedUserId,
+      auth: user.auth,
+      profile: user.profile
     });
   }
 

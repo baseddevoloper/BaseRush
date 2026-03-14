@@ -626,6 +626,12 @@ function symbolFromAddress(addressLike) {
   return found?.symbol || "UNKNOWN";
 }
 
+function tokenMetaFromAddress(addressLike) {
+  const needle = String(addressLike || "").toLowerCase();
+  const found = Object.values(TOKEN_REGISTRY).find((t) => String(t.contract || "").toLowerCase() === needle);
+  return found || { symbol: "UNKNOWN", decimals: 18, contract: addressLike };
+}
+
 async function loadOnchainTradeSummaryForWallet(walletAddress, { limit = 100 } = {}) {
   const wallet = toChecksumOrEmpty(walletAddress);
   if (!wallet || !BASE_RPC_URL || !USER_TRADE_ROUTER_ADDRESS) {
@@ -642,7 +648,6 @@ async function loadOnchainTradeSummaryForWallet(walletAddress, { limit = 100 } =
   const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
   const router = toChecksumOrEmpty(USER_TRADE_ROUTER_ADDRESS);
   const usdc = String(USDC_BASE_ADDRESS || "").toLowerCase();
-  const wrapped = String(WRAPPED_NATIVE_TOKEN || "").toLowerCase();
 
   const latest = await provider.getBlockNumber();
   const fromBlock = Math.max(0, latest - ONCHAIN_HISTORY_MAX_BLOCKS);
@@ -667,29 +672,49 @@ async function loadOnchainTradeSummaryForWallet(walletAddress, { limit = 100 } =
       const feeOutRaw = BigInt(parsed.args.feeAmountOut || 0n);
       const netOutRaw = amountOutRaw > feeOutRaw ? amountOutRaw - feeOutRaw : 0n;
 
-      const tokenInDecimals = tokenIn === usdc ? 6 : 18;
-      const tokenOutDecimals = tokenOut === usdc ? 6 : 18;
+      const tokenInMeta = tokenMetaFromAddress(tokenIn);
+      const tokenOutMeta = tokenMetaFromAddress(tokenOut);
+      const tokenInDecimals = Number(tokenInMeta.decimals || 18);
+      const tokenOutDecimals = Number(tokenOutMeta.decimals || 18);
       const amountIn = unitToNumber(amountInRaw, tokenInDecimals);
       const amountOutNet = unitToNumber(netOutRaw, tokenOutDecimals);
       const feeOut = unitToNumber(feeOutRaw, tokenOutDecimals);
 
       let side = "SWAP";
-      let token = symbolFromAddress(tokenOut);
+      let token = tokenOutMeta.symbol || "UNKNOWN";
       let grossUsdc = 0;
       let netUsdc = 0;
       let tokenAmount = 0;
+      let pair = `${tokenInMeta.symbol}/${tokenOutMeta.symbol}`;
+      let syntheticBuyToken = null;
+      let syntheticSellToken = null;
+      let syntheticSellQty = 0;
+      let syntheticBuyQty = 0;
+      let syntheticBuyCostUsdc = 0;
 
-      if (tokenIn === usdc && tokenOut === wrapped) {
+      if (tokenIn === usdc) {
         side = "BUY";
-        token = "ETH";
+        token = tokenOutMeta.symbol;
         grossUsdc = amountIn;
         tokenAmount = amountOutNet;
-      } else if (tokenIn === wrapped && tokenOut === usdc) {
+      } else if (tokenOut === usdc) {
         side = "SELL";
-        token = "ETH";
+        token = tokenInMeta.symbol;
         tokenAmount = amountIn;
         grossUsdc = unitToNumber(amountOutRaw, 6);
         netUsdc = amountOutNet;
+      } else {
+        const inPrice = Number(tokenPrices[tokenInMeta.symbol] || 0);
+        const outPrice = Number(tokenPrices[tokenOutMeta.symbol] || 0);
+        if (inPrice > 0 && outPrice > 0 && amountIn > 0 && amountOutNet > 0) {
+          side = "SWAP_PAIR";
+          const swapNotionalUsdc = amountIn * inPrice;
+          syntheticSellToken = tokenInMeta.symbol;
+          syntheticSellQty = amountIn;
+          syntheticBuyToken = tokenOutMeta.symbol;
+          syntheticBuyQty = amountOutNet;
+          syntheticBuyCostUsdc = swapNotionalUsdc;
+        }
       }
 
       parsedRows.push({
@@ -698,13 +723,21 @@ async function loadOnchainTradeSummaryForWallet(walletAddress, { limit = 100 } =
         blockNumber: Number(log.blockNumber || 0),
         logIndex: Number(log.logIndex || 0),
         token,
+        pair,
         tokenIn,
         tokenOut,
+        tokenInSymbol: tokenInMeta.symbol,
+        tokenOutSymbol: tokenOutMeta.symbol,
         side,
         grossUsdc: rounded(grossUsdc, 2),
         netUsdc: rounded(netUsdc, 2),
         tokenAmount: rounded(tokenAmount, 8),
         feeOut: rounded(feeOut, 8),
+        syntheticSellToken,
+        syntheticSellQty: rounded(syntheticSellQty, 8),
+        syntheticBuyToken,
+        syntheticBuyQty: rounded(syntheticBuyQty, 8),
+        syntheticBuyCostUsdc: rounded(syntheticBuyCostUsdc, 2),
         venue: Number(parsed.args.venue || 0),
         at: null
       });
@@ -741,32 +774,48 @@ async function loadOnchainTradeSummaryForWallet(walletAddress, { limit = 100 } =
     return a.logIndex - b.logIndex;
   });
 
-  // Realized PnL model for ETH/USDC flow using avg-cost basis.
+  // General PnL model using avg-cost basis in USDC terms.
   const positions = {};
   let realized = 0;
   for (const row of parsedRows) {
-    const token = String(row.token || "");
-    if (!token || row.side === "SWAP") continue;
-    if (!positions[token]) positions[token] = { amount: 0, costBasis: 0 };
-    const pos = positions[token];
+    row.realizedPnl = 0;
+
+    const applyBuy = (symbol, qty, costUsdc) => {
+      if (!symbol || !(qty > 0) || !(costUsdc > 0)) return;
+      if (!positions[symbol]) positions[symbol] = { amount: 0, costBasis: 0 };
+      positions[symbol].amount = rounded(positions[symbol].amount + qty, 8);
+      positions[symbol].costBasis = rounded(positions[symbol].costBasis + costUsdc, 2);
+    };
+
+    const applySell = (symbol, qty, proceedUsdc) => {
+      if (!symbol || !(qty > 0)) return 0;
+      if (!positions[symbol]) positions[symbol] = { amount: 0, costBasis: 0 };
+      const pos = positions[symbol];
+      const avg = pos.amount > 0 ? pos.costBasis / pos.amount : 0;
+      const removedCost = rounded(avg * qty, 2);
+      const r = rounded(proceedUsdc - removedCost, 2);
+      pos.amount = rounded(Math.max(0, pos.amount - qty), 8);
+      pos.costBasis = rounded(Math.max(0, pos.costBasis - removedCost), 2);
+      return r;
+    };
 
     if (row.side === "BUY") {
-      pos.amount = rounded(pos.amount + Number(row.tokenAmount || 0), 8);
-      pos.costBasis = rounded(pos.costBasis + Number(row.grossUsdc || 0), 2);
-      row.realizedPnl = 0;
+      applyBuy(String(row.token || ""), Number(row.tokenAmount || 0), Number(row.grossUsdc || 0));
       continue;
     }
 
     if (row.side === "SELL") {
-      const qty = Number(row.tokenAmount || 0);
-      const avg = pos.amount > 0 ? pos.costBasis / pos.amount : 0;
-      const removedCost = rounded(avg * qty, 2);
-      const r = rounded(Number(row.netUsdc || 0) - removedCost, 2);
-      realized = rounded(realized + r, 2);
+      const r = applySell(String(row.token || ""), Number(row.tokenAmount || 0), Number(row.netUsdc || 0));
       row.realizedPnl = r;
+      realized = rounded(realized + r, 2);
+      continue;
+    }
 
-      pos.amount = rounded(Math.max(0, pos.amount - qty), 8);
-      pos.costBasis = rounded(Math.max(0, pos.costBasis - removedCost), 2);
+    if (row.side === "SWAP_PAIR") {
+      const r = applySell(String(row.syntheticSellToken || ""), Number(row.syntheticSellQty || 0), Number(row.syntheticBuyCostUsdc || 0));
+      row.realizedPnl = r;
+      realized = rounded(realized + r, 2);
+      applyBuy(String(row.syntheticBuyToken || ""), Number(row.syntheticBuyQty || 0), Number(row.syntheticBuyCostUsdc || 0));
     }
   }
 
@@ -825,7 +874,7 @@ function buildTokenDirectory() {
   });
 }
 
-function buildTokenLeaderboard(symbol) {
+function buildTokenLeaderboard(symbol, { limit = 6 } = {}) {
   const normalized = String(symbol || "").toUpperCase();
   const rows = [];
 
@@ -844,12 +893,13 @@ function buildTokenLeaderboard(symbol) {
         handle: user.auth?.username ? "@" + user.auth.username : "@" + user.userId,
         pnl,
         trades: tradeCount,
-        amount: rounded(pos.amount || 0, 6)
+        amount: rounded(pos.amount || 0, 6),
+        walletAddress: user.auth?.address || null
       });
     }
   });
 
-  return rows.sort((a, b) => b.pnl - a.pnl).slice(0, 5);
+  return rows.sort((a, b) => b.pnl - a.pnl).slice(0, Math.max(1, Math.min(20, Number(limit || 6))));
 }
 
 function findTokenByContractOrSymbol(input) {
@@ -2014,6 +2064,7 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/token/insights") {
     const tokenInput = url.searchParams.get("token") || "";
+    const limit = Number(url.searchParams.get("limit") || 6);
     const resolved = findTokenByContractOrSymbol(tokenInput);
     if (!resolved) return json(res, 404, { ok: false, error: "token_not_found" });
 
@@ -2028,7 +2079,7 @@ const server = createServer(async (req, res) => {
       spark: "0,20 16,20 32,20 48,20 64,20 80,20 96,20 112,20"
     };
 
-    const holders = buildTokenLeaderboard(resolved.symbol);
+    const holders = buildTokenLeaderboard(resolved.symbol, { limit });
     return json(res, 200, { ok: true, token: profile, holders });
   }
 

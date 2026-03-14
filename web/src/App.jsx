@@ -252,6 +252,8 @@ export default function App() {
   const [lastApproveTx, setLastApproveTx] = useState("");
   const [lastSwapTx, setLastSwapTx] = useState("");
   const [activeTab, setActiveTab] = useState("trade");
+  const [holderBoard, setHolderBoard] = useState([]);
+  const [onchainPnl, setOnchainPnl] = useState(null);
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -383,6 +385,38 @@ export default function App() {
       cancelled = true;
     };
   }, [ethAmount, slippageBps]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadActivityData() {
+      try {
+        const out = await getJson("/api/token/insights?token=ETH&limit=6");
+        if (!cancelled) setHolderBoard(Array.isArray(out?.holders) ? out.holders : []);
+      } catch {
+        if (!cancelled) setHolderBoard([]);
+      }
+
+      if (!walletAddress) {
+        if (!cancelled) setOnchainPnl(null);
+        return;
+      }
+
+      try {
+        const out = await getJson(`/api/wallet/summary?userId=guest&walletAddress=${encodeURIComponent(walletAddress)}`);
+        if (!cancelled) setOnchainPnl(out?.onchain?.pnl || null);
+      } catch {
+        if (!cancelled) setOnchainPnl(null);
+      }
+    }
+
+    loadActivityData();
+    const timer = setInterval(loadActivityData, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [walletAddress, lastSwapTx]);
 
   async function handleConnectWallet() {
     setConnecting(true);
@@ -864,6 +898,41 @@ export default function App() {
                       <span>{error ? "Last action failed" : "System ready"}</span>
                     </div>
                     <p className="mt-2 text-xs text-zinc-400">{error || status || "No trade action yet."}</p>
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-400">Onchain PnL</span>
+                      <span className={(Number(onchainPnl?.total || 0) >= 0) ? "text-emerald-400" : "text-rose-400"}>
+                        {onchainPnl ? `${Number(onchainPnl.total || 0).toFixed(2)} USDC` : "-"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-zinc-400">
+                      <span>Realized: {onchainPnl ? Number(onchainPnl.realized || 0).toFixed(2) : "-"}</span>
+                      <span>Unrealized: {onchainPnl ? Number(onchainPnl.unrealized || 0).toFixed(2) : "-"}</span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                    <div className="mb-2 flex items-center justify-between text-xs">
+                      <span className="text-zinc-400">ETH Holders (App)</span>
+                      <span className="text-zinc-500">Top 6</span>
+                    </div>
+                    {holderBoard.length > 0 ? (
+                      <div className="grid grid-cols-3 gap-2">
+                        {holderBoard.slice(0, 6).map((h) => (
+                          <div key={h.userId} className="rounded-lg border border-white/10 bg-zinc-900/70 px-2 py-1.5">
+                            <p className="truncate text-[11px] text-zinc-300">{h.handle || h.userId}</p>
+                            <p className="text-[11px] text-zinc-400">{Number(h.amount || 0).toFixed(3)} ETH</p>
+                            <p className={`text-[11px] ${Number(h.pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {Number(h.pnl || 0) >= 0 ? "+" : ""}{Number(h.pnl || 0).toFixed(2)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-zinc-500">No holder data yet.</div>
+                    )}
                   </div>
 
                   {lastApproveTx ? (

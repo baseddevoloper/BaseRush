@@ -1,6 +1,6 @@
 # BaseRush Urun ve Teslimat Master Plani
 
-Son guncelleme: 2026-03-12  
+Son guncelleme: 2026-03-14  
 Sahiplik: Product + Engineering  
 Durum: Aktif (MVP canli, production-grade onchain social trading hedefine gidiyor)
 
@@ -117,6 +117,17 @@ Son milestone commitleri:
 - `d7cf7f8` auth status endpoint eklendi
 - `0bd873a` auth expiry UI'da gosterildi
 
+### 2.5 Base standard web app migration (2026-03-14)
+Tamamlandi:
+- Frontend runtime, `@farcaster/miniapp-sdk` bagimliligindan cikartildi.
+- `ready()` bazli mini app bootstrap kaldirildi.
+- Wallet baglantisi standard wagmi connectorlari ile duzenlendi:
+  - `injected()`
+  - `baseAccount({ appName, appLogoUrl })`
+- SSR cookie storage ile wallet session restore davranisi korundu.
+- Uygulama hala Base/Farcaster icinde acilabilir; ancak client tarafta mini-app-only SDK akisi kullanilmiyor.
+- Root static build dosyalari (`index.html` + `assets/`) temiz build ile yeniden sabitlendi.
+
 ## 3) Aciklar ve risk kayitlari
 
 ### 3.1 Urun aciklari
@@ -146,7 +157,8 @@ Son milestone commitleri:
 ### 4.1 Runtime mimarisi
 - Client:
   - React mobil mini app UI
-  - Mini app SDK + quick auth
+  - Standard web app runtime (wagmi + viem)
+  - Connectorlar: injected + Base Account
 - API:
   - auth, wallet, token, trade, premium, copy, social modulleri
 - Worker:
@@ -197,8 +209,8 @@ Son milestone commitleri:
 
 ### 5.1 App acilis ve session akisi
 1. Kullanici mini app'i Farcaster/Base icinde acar.
-2. App runtime context'i algilar.
-3. Quick auth token istenir ve verify edilir.
+2. App standard web runtime olarak acilir ve wallet provider algilanir.
+3. Quick auth token gerekiyorsa istenir ve verify edilir.
 4. `GET /api/auth/status` ile popup zorlamadan session restore denenir.
 5. Wallet Session kartinda su bilgiler gorunur:
 - Connected durumu

@@ -10,7 +10,6 @@ import {
   Settings,
   Wallet as WalletIcon
 } from "lucide-react";
-import { sdk } from "@farcaster/miniapp-sdk";
 import { useAccount } from "wagmi";
 import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, parseUnits } from "viem";
 import { Button } from "./components/ui/button";
@@ -232,7 +231,7 @@ function appendBuilderDataSuffix(calldata, suffix) {
 }
 
 export default function App() {
-  const { address: wagmiAddress, isConnected: wagmiConnected } = useAccount();
+  const { address: wagmiAddress, isConnected: wagmiConnected, connector } = useAccount();
 
   const [miniAppDetected, setMiniAppDetected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -305,25 +304,27 @@ export default function App() {
     };
   }, [ethAmount, quoteSell, slippagePct]);
 
-  function getProvider() {
-    return (
-      sdk?.wallet?.ethProvider ||
-      (typeof window !== "undefined" ? window?.miniapp?.sdk?.wallet?.ethProvider : null) ||
-      null
-    );
+  async function getProvider() {
+    try {
+      if (connector?.getProvider) {
+        const p = await connector.getProvider();
+        if (p?.request) return p;
+      }
+    } catch {
+      // fallback to injected provider
+    }
+    if (typeof window !== "undefined" && window?.ethereum?.request) {
+      return window.ethereum;
+    }
+    return null;
   }
 
   useEffect(() => {
     let active = true;
 
     async function boot() {
-      try {
-        const inMini = await sdk.isInMiniApp();
-        if (active) setMiniAppDetected(!!inMini);
-      } catch {
-        const fallback = typeof window !== "undefined" && !!(window.miniapp?.sdk || window.farcaster);
-        if (active) setMiniAppDetected(fallback);
-      }
+      const hasInjected = typeof window !== "undefined" && !!window?.ethereum;
+      if (active) setMiniAppDetected(hasInjected);
 
       try {
         const out = await getJson("/api/onchain/config");
@@ -335,7 +336,7 @@ export default function App() {
       }
 
       try {
-        const provider = getProvider();
+        const provider = await getProvider();
         if (!provider?.request || !active) return;
         const accounts = await provider.request({ method: "eth_accounts" });
         const addr = Array.isArray(accounts) ? String(accounts[0] || "") : "";
@@ -389,7 +390,7 @@ export default function App() {
     setStatus("Connecting wallet...");
 
     try {
-      const provider = getProvider();
+      const provider = await getProvider();
       if (!provider?.request) throw new Error("wallet_provider_unavailable");
 
       const accounts = await provider.request({ method: "eth_requestAccounts" });
@@ -489,7 +490,7 @@ export default function App() {
       if (!walletAddress) throw new Error("wallet_not_connected");
       if (!routerAddress) throw new Error("user_router_not_configured");
 
-      const provider = getProvider();
+      const provider = await getProvider();
       if (!provider?.request) throw new Error("wallet_provider_unavailable");
 
       const nEth = Number(ethAmount || 0);
@@ -701,8 +702,8 @@ export default function App() {
                 <p className="truncate">{walletConnected ? shortAddr(walletAddress) : "Not connected"}</p>
               </div>
               <div className="rounded-lg border border-white/10 bg-black/30 px-2 py-1.5">
-                <p className="text-zinc-500">Mini app</p>
-                <p>{miniAppDetected ? "Detected" : "Browser"}</p>
+                <p className="text-zinc-500">Wallet provider</p>
+                <p>{miniAppDetected ? "Injected" : "Not detected"}</p>
               </div>
             </div>
           </CardHeader>
@@ -896,8 +897,8 @@ export default function App() {
                       <span>{walletConnected ? shortAddr(walletAddress) : "Not connected"}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-zinc-400">Mini app context</span>
-                      <span>{miniAppDetected ? "Detected" : "Not detected"}</span>
+                      <span className="text-zinc-400">Wallet provider</span>
+                      <span>{miniAppDetected ? "Injected" : "Not detected"}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-zinc-400">USDC</span>

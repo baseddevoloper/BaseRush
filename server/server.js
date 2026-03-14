@@ -51,6 +51,8 @@ const TOKEN_MARKET_DATA = {
   BRETT: { verified: false, tradable: true, mcap: "$1.3B", volume24h: "$144M", change24h: 3.48, spark: "0,35 16,34 32,30 48,27 64,24 80,20 96,16 112,13" },
   ZORA: { verified: true, tradable: true, mcap: "$370M", volume24h: "$12M", change24h: 2.41, spark: "0,32 16,31 32,30 48,29 64,24 80,20 96,16 112,12" }
 };
+const OFFICIAL_LISTING_SYMBOLS = new Set(["ETH", "USDC", "AERO", "ZORA"]);
+const UNOFFICIAL_LISTING_MIN_TRADES = 5;
 
 const ENABLE_REAL_ONCHAIN = process.env.NODE_ENV === "test" ? false : process.env.ENABLE_REAL_ONCHAIN === "true";
 const BASE_RPC_URL = process.env.BASE_RPC_URL || "";
@@ -864,6 +866,14 @@ function buildTokenDirectory() {
   return Object.values(TOKEN_REGISTRY).map((token) => {
     const symbol = token.symbol;
     const market = TOKEN_MARKET_DATA[symbol] || {};
+    let appTrades = 0;
+    db.users.forEach((user) => {
+      appTrades += (user.trades || []).filter((t) => String(t.token || "").toUpperCase() === symbol).length;
+    });
+    const official = OFFICIAL_LISTING_SYMBOLS.has(symbol) || !!market.verified;
+    const unofficial = !official && appTrades >= UNOFFICIAL_LISTING_MIN_TRADES;
+    const listingStatus = official ? "official" : unofficial ? "unofficial" : "none";
+
     return {
       ...token,
       price: tokenPrices[symbol] || 0,
@@ -872,7 +882,11 @@ function buildTokenDirectory() {
       mcap: market.mcap || "-",
       volume24h: market.volume24h || "-",
       change24h: Number(market.change24h || 0),
-      spark: market.spark || "0,20 16,20 32,20 48,20 64,20 80,20 96,20 112,20"
+      spark: market.spark || "0,20 16,20 32,20 48,20 64,20 80,20 96,20 112,20",
+      appTrades,
+      listingStatus,
+      isOfficialListing: official,
+      isUnofficialListing: unofficial
     };
   });
 }
@@ -2067,14 +2081,24 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/token/search") {
     const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+    const listedOnly = String(url.searchParams.get("listedOnly") || "false").toLowerCase() === "true";
     const directory = buildTokenDirectory();
-    const items = !q
+    let items = !q
       ? directory
       : directory.filter((t) =>
           t.symbol.toLowerCase().includes(q) ||
           t.name.toLowerCase().includes(q) ||
           t.contract.toLowerCase().includes(q)
         );
+
+    if (listedOnly) items = items.filter((t) => t.listingStatus !== "none");
+    items = items.sort((a, b) => {
+      const rank = (x) => x.listingStatus === "official" ? 0 : x.listingStatus === "unofficial" ? 1 : 2;
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return Number(b.appTrades || 0) - Number(a.appTrades || 0);
+    });
 
     return json(res, 200, { ok: true, items });
   }

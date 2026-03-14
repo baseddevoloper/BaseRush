@@ -257,6 +257,8 @@ export default function App() {
   const [featuredTokens, setFeaturedTokens] = useState({ popular: [], meme: [] });
   const [featuredTab, setFeaturedTab] = useState("popular");
   const [insightToken, setInsightToken] = useState("ETH");
+  const [tokenQuery, setTokenQuery] = useState("");
+  const [searchTokens, setSearchTokens] = useState([]);
 
   const walletAddress = connectedAddress || wagmiAddress || "";
   const walletConnected = Boolean(walletAddress) || wagmiConnected;
@@ -406,6 +408,24 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const q = tokenQuery.trim();
+        const out = await getJson(`/api/token/search?listedOnly=true&q=${encodeURIComponent(q)}`);
+        if (!cancelled) setSearchTokens(Array.isArray(out?.items) ? out.items : []);
+      } catch {
+        if (!cancelled) setSearchTokens([]);
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [tokenQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -774,6 +794,50 @@ export default function App() {
             <div className="space-y-3">
               <Card className="border-white/10 bg-zinc-900/80">
                 <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Token Search</CardTitle>
+                  <CardDescription>Search by symbol or contract.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Input
+                    value={tokenQuery}
+                    onChange={(e) => setTokenQuery(e.target.value)}
+                    placeholder="Search token or paste contract"
+                  />
+                  <div className="max-h-56 space-y-2 overflow-auto pr-1">
+                    {searchTokens.slice(0, 8).map((t) => (
+                      <button
+                        key={t.symbol}
+                        type="button"
+                        onClick={() => setInsightToken(t.symbol)}
+                        className={`w-full rounded-xl border px-3 py-2 text-left ${insightToken === t.symbol ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-black/30"}`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium">{t.symbol}</p>
+                            <p className="text-xs text-zinc-400">{t.name}</p>
+                          </div>
+                          <div className="text-right">
+                            {t.listingStatus === "official" ? (
+                              <Badge variant="success">Official</Badge>
+                            ) : t.listingStatus === "unofficial" ? (
+                              <Badge variant="muted">Unofficial</Badge>
+                            ) : null}
+                            <p className="mt-1 text-[11px] text-zinc-500">{Number(t.appTrades || 0)} trades</p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                    {searchTokens.length === 0 && (
+                      <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-zinc-500">
+                        No listed token found.
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-white/10 bg-zinc-900/80">
+                <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Market Overview</CardTitle>
                   <CardDescription>Popular and meme tokens on Base.</CardDescription>
                 </CardHeader>
@@ -796,6 +860,9 @@ export default function App() {
                       >
                         <p className="text-sm font-medium">{t.symbol}</p>
                         <p className="text-xs text-zinc-400">{t.name}</p>
+                        <p className="mt-1 text-[11px] text-zinc-500">
+                          {t.listingStatus === "official" ? "Official listing" : t.listingStatus === "unofficial" ? "Unofficial listing" : "Not listed"}
+                        </p>
                         <p className={`mt-1 text-xs ${Number(t.change24h || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                           {Number(t.change24h || 0) >= 0 ? "+" : ""}{Number(t.change24h || 0).toFixed(2)}%
                         </p>

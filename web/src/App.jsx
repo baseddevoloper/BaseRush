@@ -1332,6 +1332,7 @@ export default function App() {
       }
 
       let needsApprove = false;
+      const forceTwoStepSell = side === "SELL" && !selectedIsNative;
       if ((side === "BUY" && !useEthRoute) || (side === "SELL" && !selectedIsNative)) {
         let currentAllowance = 0n;
         try {
@@ -1354,7 +1355,7 @@ export default function App() {
           currentAllowance = 0n;
         }
 
-        needsApprove = currentAllowance < amountInRaw;
+        needsApprove = forceTwoStepSell || currentAllowance < amountInRaw;
         if (needsApprove) {
           setStatus("Step 1/2: Approve token...");
           const approveData = encodeFunctionData({

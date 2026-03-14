@@ -408,7 +408,10 @@ function persistProfilesToDisk() {
     db.users.forEach((user, userId) => {
       payload[userId] = {
         auth: user.auth || { provider: "guest", fid: null, address: null, username: null },
-        profile: user.profile || null
+        profile: user.profile || null,
+        wallet: user.wallet || { usdc: 0, feesPaid: 0, realizedPnl: 0 },
+        positions: user.positions || {},
+        trades: Array.isArray(user.trades) ? user.trades.slice(0, 200) : []
       };
     });
     writeFileSync(PROFILE_DB_FILE, JSON.stringify(payload, null, 2), "utf8");
@@ -430,6 +433,15 @@ function hydrateProfilesFromDisk() {
       }
       if (row?.profile && typeof row.profile === "object") {
         current.profile = { ...(current.profile || {}), ...row.profile };
+      }
+      if (row?.wallet && typeof row.wallet === "object") {
+        current.wallet = { ...(current.wallet || {}), ...row.wallet };
+      }
+      if (row?.positions && typeof row.positions === "object") {
+        current.positions = { ...(current.positions || {}), ...row.positions };
+      }
+      if (Array.isArray(row?.trades)) {
+        current.trades = row.trades.slice(0, 200);
       }
     });
   } catch {
@@ -1548,6 +1560,7 @@ function executeTradeForUser(user, { token, side = "BUY", amountUsdc, tokenAmoun
 
   user.trades = user.trades.slice(0, 100);
   const summary = buildWalletSummary(user);
+  persistProfilesToDisk();
   return { summary, trade: user.trades[0] };
 }
 

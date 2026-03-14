@@ -345,6 +345,31 @@ function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProf
   const wins = myFeed.filter((x) => Number(x.pnl || 0) >= 0).length;
   const total = myFeed.length;
   const winRate = total > 0 ? (wins * 100) / total : 0;
+  const recentTrades = Array.isArray(walletSummary?.recentTrades) ? walletSummary.recentTrades : [];
+  const byToken = new Map();
+  recentTrades.forEach((t) => {
+    const token = String(t?.token || "").toUpperCase();
+    if (!token) return;
+    if (!byToken.has(token)) {
+      byToken.set(token, {
+        token,
+        trades: 0,
+        buy: 0,
+        sell: 0,
+        realizedPnl: 0
+      });
+    }
+    const row = byToken.get(token);
+    row.trades += 1;
+    if (String(t?.side || "").toUpperCase() === "BUY") row.buy += 1;
+    if (String(t?.side || "").toUpperCase() === "SELL") row.sell += 1;
+    row.realizedPnl += Number(t?.realizedPnl || 0);
+  });
+  const tradedTokens = Array.from(byToken.values())
+    .map((x) => ({ ...x, realizedPnl: Number(x.realizedPnl.toFixed(2)) }))
+    .sort((a, b) => b.trades - a.trades)
+    .slice(0, 6);
+
   return {
     handle: socialProfile?.handle || (walletAddress ? `@${shortAddr(walletAddress)}` : "@guest"),
     displayName: socialProfile?.displayName || miniAppUser?.displayName || miniAppUser?.username || socialProfile?.handle?.replace(/^@/, "") || "BaseRush User",
@@ -359,7 +384,8 @@ function mapProfileStatsVM({ walletSummary, feedItems, walletAddress, socialProf
     winRate,
     totalPnl: Number(wallet.onchainTotalPnl || wallet.totalPnl || 0),
     realizedPnl: Number(wallet.onchainRealizedPnl || wallet.realizedPnl || 0),
-    unrealizedPnl: Number(wallet.onchainUnrealizedPnl || wallet.unrealizedPnl || 0)
+    unrealizedPnl: Number(wallet.onchainUnrealizedPnl || wallet.unrealizedPnl || 0),
+    tradedTokens
   };
 }
 
@@ -1135,10 +1161,10 @@ export default function App() {
       <div className="relative mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-24 pt-4">
         <Card className="overflow-hidden border-white/20 bg-gradient-to-br from-violet-500/50 via-indigo-500/35 to-slate-900/60 shadow-[0_24px_80px_-28px_rgba(124,58,237,0.95)] backdrop-blur-xl">
           <CardHeader className="space-y-3 pb-4">
-                <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between">
                   <div>
                     <CardDescription className="text-zinc-400">BaseRush</CardDescription>
-                    <CardTitle className="text-2xl">{homeVM.displayName}</CardTitle>
+                    <CardTitle className="text-2xl">{activeTab === "profile" ? "Profile" : homeVM.displayName}</CardTitle>
                   </div>
                   <Badge variant={walletConnected ? "success" : "muted"}>{walletConnected ? "Connected" : "Guest"}</Badge>
                 </div>
@@ -1591,6 +1617,29 @@ export default function App() {
                   <div className="rounded-2xl border border-violet-400/40 bg-violet-500/10 p-3 text-xs">
                     <p className="font-semibold">Copy Trade</p>
                     <p className="text-zinc-400">Coming soon</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/20 bg-black/35 p-3">
+                    <div className="mb-2 flex items-center justify-between text-xs">
+                      <p className="font-semibold text-zinc-200">App Traded Tokens</p>
+                      <p className="text-zinc-500">Last activity</p>
+                    </div>
+                    {Array.isArray(profileVM.tradedTokens) && profileVM.tradedTokens.length > 0 ? (
+                      <div className="space-y-2">
+                        {profileVM.tradedTokens.map((t) => (
+                          <div key={t.token} className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-2 py-1.5 text-xs">
+                            <div>
+                              <p className="font-medium">{t.token}</p>
+                              <p className="text-zinc-500">{t.trades} trades • B{t.buy}/S{t.sell}</p>
+                            </div>
+                            <p className={t.realizedPnl >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                              {t.realizedPnl >= 0 ? "+" : ""}{t.realizedPnl.toFixed(2)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-zinc-500">No app trades yet.</p>
+                    )}
                   </div>
                   <div className="space-y-1 rounded-2xl border border-white/20 bg-black/35 p-3">
                     <div className="flex items-center justify-between">
